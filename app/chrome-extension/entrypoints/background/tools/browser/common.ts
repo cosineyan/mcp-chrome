@@ -16,6 +16,7 @@ interface NavigateToolParams {
   tabId?: number;
   windowId?: number;
   background?: boolean; // when true, do not activate tab or focus window
+  forceNewTab?: boolean; // when true, always create a new tab (skip existing-tab detection)
 }
 
 /**
@@ -48,6 +49,7 @@ class NavigateTool extends BaseBrowserToolExecutor {
       tabId,
       background,
       windowId,
+      forceNewTab = false,
     } = args;
 
     console.log(
@@ -185,8 +187,7 @@ class NavigateTool extends BaseBrowserToolExecutor {
 
       // Prefer strict match when user specifies a concrete path/query.
       // Only fall back to host-level activation when the target is site root.
-      const pickBestMatch = (target: string, tabsToPick: chrome.tabs.Tab[]) => {
-        let targetUrl: URL | undefined;
+      const pickBestMatch = (target: string, tabsToPick: chrome.tabs.Tab[]) => {        let targetUrl: URL | undefined;
         try {
           targetUrl = new URL(target);
         } catch {
@@ -251,7 +252,7 @@ class NavigateTool extends BaseBrowserToolExecutor {
       };
 
       const explicitTab = await this.tryGetTab(tabId);
-      const existingTab = explicitTab || pickBestMatch(url, candidateTabs);
+      const existingTab = !forceNewTab ? (explicitTab || pickBestMatch(url, candidateTabs)) : null;
       if (existingTab?.id !== undefined) {
         console.log(
           `URL already open in Tab ID: ${existingTab.id}, Window ID: ${existingTab.windowId}`,

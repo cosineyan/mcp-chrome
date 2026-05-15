@@ -10,6 +10,8 @@ export enum NativeMessageType {
   PROCESS_DATA_RESPONSE = 'process_data_response',
   CALL_TOOL = 'call_tool',
   CALL_TOOL_RESPONSE = 'call_tool_response',
+  // Execute JS in a tab without output sanitization (for trusted local callers only)
+  EXEC_TAB_JS = 'exec_tab_js',
   // Additional message types used in Chrome extension
   SERVER_STARTED = 'server_started',
   SERVER_STOPPED = 'server_stopped',

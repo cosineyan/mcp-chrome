@@ -425,6 +425,11 @@ export const TOOL_SCHEMAS: Tool[] = [
           description:
             'Perform the operation without stealing focus (do not activate the tab or focus the window). Default: false',
         },
+        forceNewTab: {
+          type: 'boolean',
+          description:
+            'Always create a new tab even if the URL is already open (skip existing-tab detection). Default: false',
+        },
         width: {
           type: 'number',
           description:
