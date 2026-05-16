@@ -75,7 +75,17 @@ npm link
 mcp-chrome-bridge register --extension-id <plugin id>
 ```
 
-4. **Install mcp-chrome-bridge globally (not supported yet)**
+4. **Setup local env file**
+   ~/.mcp-chrome-bridge.env
+
+```
+export ANTHROPIC_BASE_URL=http://127.0.0.1:6655/anthropic/
+export ANTHROPIC_AUTH_TOKEN=****
+export ANTHROPIC_API_KEY=****
+export MCP_BRIDGE_ENV_LOADED=1
+```
+
+5. **Install mcp-chrome-bridge globally (not supported yet)**
 
 npm
 

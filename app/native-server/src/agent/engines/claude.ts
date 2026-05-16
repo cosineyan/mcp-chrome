@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
+import os from 'node:os';
+import { readFile } from 'node:fs/promises';
 import type { AgentEngine, EngineExecutionContext, EngineInitOptions } from './types';
 import type { AgentMessage, RealtimeEvent } from '../types';
 import { detectCcr, validateCcrConfig } from '../ccr-detector';
@@ -761,10 +763,19 @@ export class ClaudeEngine implements AgentEngine {
         console.error('[ClaudeEngine] Chrome MCP server disabled');
       }
 
-      // Add resume option if we have a valid Claude session ID
+      // Add resume option if we have a valid Claude session ID.
+      // Session teleport-resume requires claude.ai OAuth. Skip if OAuth is not available
+      // (proxy users, API-key-only setups, or when no credentials are in the environment).
       if (resumeClaudeSessionId) {
-        queryOptions.resume = resumeClaudeSessionId;
-        console.error(`[ClaudeEngine] Resuming Claude session: ${resumeClaudeSessionId}`);
+        const oauthAvailable = await this.hasOAuthToken(claudeEnv);
+        if (oauthAvailable) {
+          queryOptions.resume = resumeClaudeSessionId;
+          console.error(`[ClaudeEngine] Resuming Claude session: ${resumeClaudeSessionId}`);
+        } else {
+          console.error(
+            '[ClaudeEngine] Skipping session resume: no OAuth token available (proxy/API-key mode). Session will start fresh.',
+          );
+        }
       }
 
       const response = query({
@@ -1251,7 +1262,38 @@ export class ClaudeEngine implements AgentEngine {
   }
 
   /**
-   * Build environment variables for Claude Code.
+   * Check whether a claude.ai OAuth token is available.
+   *
+   * Session teleport-resume requires claude.ai OAuth. Users running via API key
+   * or a proxy (ANTHROPIC_AUTH_TOKEN / ANTHROPIC_BASE_URL) do not have OAuth.
+   *
+   * Detection order (mirrors the CLI's t6() function):
+   * 1. CLAUDE_CODE_OAUTH_TOKEN env var
+   * 2. ~/.claude settings file claudeAiOauth.accessToken
+   */
+  private async hasOAuthToken(env: NodeJS.ProcessEnv): Promise<boolean> {
+    // Check env var first (fastest path)
+    if (env.CLAUDE_CODE_OAUTH_TOKEN) {
+      return true;
+    }
+
+    // Check ~/.claude settings file for stored OAuth token
+    try {
+      const settingsPath = path.join(os.homedir(), '.claude', 'settings.json');
+      const content = await readFile(settingsPath, 'utf-8');
+      const settings = JSON.parse(content) as Record<string, unknown>;
+      const oauth = settings.claudeAiOauth as Record<string, unknown> | undefined;
+      if (oauth?.accessToken && typeof oauth.accessToken === 'string') {
+        return true;
+      }
+    } catch {
+      // File missing or parse error → no OAuth
+    }
+
+    return false;
+  }
+
+  /**
    * Supports Claude Code Router (CCR) when useCcr is true:
    * 1. Auto-detecting CCR from config file (~/.claude-code-router/config.json)
    * 2. Passing through env vars if already set (via `eval "$(ccr activate)"`)
@@ -1302,6 +1344,17 @@ export class ClaudeEngine implements AgentEngine {
       const preview =
         authToken.length > 8 ? `${authToken.slice(0, 4)}...${authToken.slice(-4)}` : '****';
       console.error(`[ClaudeEngine] Using ANTHROPIC_AUTH_TOKEN: ${preview}`);
+
+      // Proxy mode: ANTHROPIC_AUTH_TOKEN is set but no ANTHROPIC_API_KEY.
+      // Claude Code CLI's cD() returns {source:"none"} in this case, causing auth errors
+      // to show "Please run /login" instead of "Fix external API key".
+      // Mirror the token into ANTHROPIC_API_KEY so the CLI recognises it as an API key.
+      if (!env.ANTHROPIC_API_KEY) {
+        env.ANTHROPIC_API_KEY = authToken;
+        console.error(
+          '[ClaudeEngine] Mirrored ANTHROPIC_AUTH_TOKEN -> ANTHROPIC_API_KEY for proxy mode',
+        );
+      }
     }
 
     return env;

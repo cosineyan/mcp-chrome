@@ -252,6 +252,51 @@ NODE_BIN_DIR="$(dirname "${NODE_EXEC}")"
 export PATH="${NODE_BIN_DIR}${PATH:+:${PATH}}"
 echo "Added ${NODE_BIN_DIR} to PATH" >> "${WRAPPER_LOG}"
 
+# Load user environment variables so proxy/API settings are available.
+# Chrome launches native messaging hosts with a minimal environment (no shell profile).
+# We try three sources in order:
+#   1. ~/.mcp-chrome-bridge.env  — dedicated override file (highest priority)
+#   2. ~/.zshenv                 — zsh non-interactive env (always sourced by zsh)
+#   3. User's default shell rc   — extracts only ANTHROPIC_* and CLAUDE_* exports
+{
+    echo "Loading user environment..." >> "${WRAPPER_LOG}"
+
+    # Source dedicated env file if it exists
+    if [ -f "${HOME}/.mcp-chrome-bridge.env" ]; then
+        # shellcheck disable=SC1091
+        source "${HOME}/.mcp-chrome-bridge.env" 2>/dev/null || true
+        echo "Loaded ${HOME}/.mcp-chrome-bridge.env" >> "${WRAPPER_LOG}"
+    fi
+
+    # Source ~/.zshenv (loaded for all zsh invocations, safe for env vars)
+    if [ -f "${HOME}/.zshenv" ] && [ -z "${MCP_BRIDGE_ENV_LOADED:-}" ]; then
+        # shellcheck disable=SC1091
+        source "${HOME}/.zshenv" 2>/dev/null || true
+        echo "Loaded ~/.zshenv" >> "${WRAPPER_LOG}"
+    fi
+
+    # If ANTHROPIC vars are still missing, try extracting them from the user's shell rc
+    if [ -z "${ANTHROPIC_BASE_URL:-}" ] || [ -z "${ANTHROPIC_AUTH_TOKEN:-}" ]; then
+        USER_SHELL_NAME="$(basename "${SHELL:-/bin/bash}")"
+        RC_FILE=""
+        case "${USER_SHELL_NAME}" in
+            zsh)  RC_FILE="${HOME}/.zshrc" ;;
+            bash) RC_FILE="${HOME}/.bash_profile" ;;
+        esac
+
+        if [ -n "${RC_FILE}" ] && [ -f "${RC_FILE}" ]; then
+            # Use the user's shell to evaluate the rc file and capture ANTHROPIC_*/CLAUDE_* exports
+            EXTRACTED_VARS="$("${SHELL:-/bin/bash}" -i -c 'env' 2>/dev/null | grep -E '^(ANTHROPIC_|CLAUDE_CODE_OAUTH)' || true)"
+            if [ -n "${EXTRACTED_VARS}" ]; then
+                while IFS='=' read -r key value; do
+                    [ -n "${key}" ] && export "${key}=${value}"
+                done <<< "${EXTRACTED_VARS}"
+                echo "Extracted ANTHROPIC/CLAUDE vars from ${USER_SHELL_NAME}" >> "${WRAPPER_LOG}"
+            fi
+        fi
+    fi
+} 2>> "${WRAPPER_LOG}"
+
 # Log Claude Code Router (CCR) related env vars for debugging
 # These are set by `eval "$(ccr activate)"` or in shell profile
 if [ -n "${ANTHROPIC_BASE_URL:-}" ]; then
