@@ -58,7 +58,24 @@ Chrome MCP Server is a Chrome extension-based **Model Context Protocol (MCP) ser
 
 Download link: https://github.com/cosineyan/mcp-chrome/releases
 
-2. **Install mcp-chrome-bridge globally**
+2. **Load Chrome Extension**
+   - Open Chrome and go to `chrome://extensions/`
+   - Enable "Developer mode"
+   - Click "Load unpacked" and select `your/dowloaded/extension/folder`
+   - In the extension management page, note down the ID of the plugin
+   - Click the extension icon to open the plugin, then click connect to see the MCP configuration
+
+3. **Install mcp-chrome-bridge locally**
+
+```bash
+cd app/native-server
+npm run build
+npm link
+
+mcp-chrome-bridge register --extension-id <plugin id>
+```
+
+4. **Install mcp-chrome-bridge globally (not supported yet)**
 
 npm
 
@@ -79,13 +96,6 @@ mcp-chrome-bridge register
 ```
 
 > Note: pnpm v7+ disables postinstall scripts by default for security. The `enable-pre-post-scripts` setting controls whether pre/post install scripts run. If automatic registration fails, use the manual registration command above.
-
-3. **Load Chrome Extension**
-   - Open Chrome and go to `chrome://extensions/`
-   - Enable "Developer mode"
-   - Click "Load unpacked" and select `your/dowloaded/extension/folder`
-   - Click the extension icon to open the plugin, then click connect to see the MCP configuration
-     <img width="475" alt="Screenshot 2025-06-09 15 52 06" src="https://github.com/user-attachments/assets/241e57b8-c55f-41a4-9188-0367293dc5bc" />
 
 ### Usage with MCP Protocol Clients
 
