@@ -101,9 +101,64 @@ export CHROME_MCP_NODE_PATH=/path/to/your/node
 
 或者运行 `mcp-chrome-bridge doctor --fix` 来写入当前 Node 路径。
 
-3.3 如果排除了以上两种原因都不行，则查看日志目录的日志，然后提issue
+#### macOS：连接后报 "Native host has exited"，退出码 126
 
-### 日志位置
+**现象**：点击插件弹窗的 Connect 按钮后，控制台出现 "Native host has exited."，日志文件中显示：
+
+```
+bash: /opt/homebrew/.../run_host.sh: Operation not permitted
+```
+
+或者 run_host 脚本以退出码 126 退出。
+
+**原因**：在 macOS 上，Chrome 的进程树受到 TCC（透明度、同意与控制）沙箱限制。Chrome 通过 `bash` 启动 Native Messaging Host 时，macOS 会阻止执行位于 `/opt/homebrew/` 或 `~/Documents/` 等路径下的 shell 脚本，返回 "Operation not permitted"。这**不是**文件权限问题（`chmod 755` 无法修复），而是基于路径的安全策略。
+
+| 路径                                                                | 结果                                 |
+| ------------------------------------------------------------------- | ------------------------------------ |
+| `/opt/homebrew/lib/node_modules/mcp-chrome-bridge/dist/run_host.sh` | ❌ exit 126，Operation not permitted |
+| `~/Documents/.../run_host.sh`                                       | ❌ exit 126，Operation not permitted |
+| `~/Library/Application Scripts/mcp-chrome-bridge/run_host.sh`       | ✅ 正常执行                          |
+
+**解决方案**：重新运行 register 命令。从修复版本起，`mcp-chrome-bridge register` 会自动在 `~/Library/Application Scripts/mcp-chrome-bridge/` 下创建启动目录，并将清单指向该路径。
+
+```bash
+mcp-chrome-bridge register
+```
+
+如需手动恢复，执行以下命令：
+
+```bash
+LAUNCHER_DIR="$HOME/Library/Application Scripts/mcp-chrome-bridge"
+DIST_DIR="/opt/homebrew/lib/node_modules/mcp-chrome-bridge/dist"   # 按实际路径调整
+
+mkdir -p "$LAUNCHER_DIR"
+cp "$DIST_DIR/run_host.sh" "$LAUNCHER_DIR/"
+cp "$DIST_DIR/node_path.txt" "$LAUNCHER_DIR/"
+chmod 755 "$LAUNCHER_DIR/run_host.sh"
+
+# 写入代理 index.js，让真实 index.js 内部的相对路径仍能正确解析
+echo "\"use strict\"; require('$DIST_DIR/index.js');" > "$LAUNCHER_DIR/index.js"
+```
+
+然后将清单文件的 `path` 字段更新为 `~/Library/Application Scripts/mcp-chrome-bridge/run_host.sh`。
+
+---
+
+#### 本地开发：注册 Dev 扩展 ID
+
+在开发者模式下加载未打包的 Chrome 扩展时，Chrome 会随机分配一个扩展 ID。Native Messaging Host 清单中的 `allowed_origins` 必须包含这个 ID，否则连接会被拒绝。
+
+**第一步**：在 `chrome://extensions` 页面（开启开发者模式）找到你的扩展 ID。
+
+**第二步**：用 `--extension-id` 参数注册：
+
+```bash
+mcp-chrome-bridge register --extension-id <你的开发扩展ID>
+```
+
+**第三步**（可选，固定 ID）：在 `app/chrome-extension/.env.local` 中设置 `CHROME_EXTENSION_KEY`，将一个固定公钥写入扩展 manifest，这样无论从哪个路径加载，Chrome 都会分配相同的扩展 ID。
+
+---
 
 包装器日志现在存储在用户可写的位置：
 

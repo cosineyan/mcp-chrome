@@ -86,6 +86,68 @@ export CHROME_MCP_NODE_PATH=/path/to/your/node
 
 Or run `mcp-chrome-bridge doctor --fix` to write the current Node path.
 
+## macOS: "Native host has exited" with exit code 126
+
+**Symptom**: Clicking Connect in the extension popup shows "Native host has exited." in the console. The wrapper log shows:
+
+```
+bash: /opt/homebrew/.../run_host.sh: Operation not permitted
+```
+
+or exit code 126 from the run_host script.
+
+**Cause**: On macOS, Chrome's process tree is subject to TCC (Transparency, Consent, and Control) sandbox restrictions. When Chrome launches the Native Messaging host via `bash`, macOS blocks execution of shell scripts located at paths like `/opt/homebrew/` or `~/Documents/`. This is not a file-permission problem (`chmod 755` does not fix it) — it is a path-based security policy.
+
+Affected paths (blocked):
+
+- `/opt/homebrew/lib/node_modules/mcp-chrome-bridge/dist/run_host.sh`
+- `~/Documents/.../.../run_host.sh`
+
+Allowed path:
+
+- `~/Library/Application Scripts/mcp-chrome-bridge/run_host.sh`
+
+**Fix**: Re-run the register command. Starting from this fix, `mcp-chrome-bridge register` automatically sets up a launcher directory at `~/Library/Application Scripts/mcp-chrome-bridge/` and points the manifest there.
+
+```bash
+mcp-chrome-bridge register
+```
+
+If you need to restore it manually, copy the three files:
+
+```bash
+LAUNCHER_DIR="$HOME/Library/Application Scripts/mcp-chrome-bridge"
+DIST_DIR="/opt/homebrew/lib/node_modules/mcp-chrome-bridge/dist"   # adjust if needed
+
+mkdir -p "$LAUNCHER_DIR"
+cp "$DIST_DIR/run_host.sh" "$LAUNCHER_DIR/"
+cp "$DIST_DIR/node_path.txt" "$LAUNCHER_DIR/"
+chmod 755 "$LAUNCHER_DIR/run_host.sh"
+
+# Write a proxy index.js so node_modules paths inside the real index.js still resolve
+echo "\"use strict\"; require('$DIST_DIR/index.js');" > "$LAUNCHER_DIR/index.js"
+```
+
+Then update the manifest path field to `~/Library/Application Scripts/mcp-chrome-bridge/run_host.sh`.
+
+---
+
+## Local Development: Registering a Dev Extension ID
+
+When loading the Chrome extension in developer mode (without publishing to the Chrome Web Store), Chrome assigns a random extension ID. The Native Messaging host manifest must include this ID in `allowed_origins` or the connection will be rejected.
+
+**Step 1**: Find your dev extension ID in `chrome://extensions` (enable Developer mode, then copy the ID under your unpacked extension).
+
+**Step 2**: Register with your dev ID:
+
+```bash
+mcp-chrome-bridge register --extension-id <your-dev-extension-id>
+```
+
+**Step 3** (optional, for a stable ID across rebuilds): Set `CHROME_EXTENSION_KEY` in `app/chrome-extension/.env.local`. This encodes a fixed public key into the extension manifest so Chrome always assigns the same ID regardless of the load path.
+
+---
+
 ## Log Locations
 
 Wrapper logs are now stored in user-writable locations:

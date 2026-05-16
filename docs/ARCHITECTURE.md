@@ -102,6 +102,20 @@ graph TB
 - MCP SDK (@modelcontextprotocol/sdk)
 - Native messaging protocol
 
+**macOS Launcher Directory**:
+
+On macOS, Chrome's TCC sandbox blocks `bash` from executing shell scripts located at paths like `/opt/homebrew/` or `~/Documents/`, returning `EPERM` (exit 126). To work around this, the `register` command sets up a dedicated launcher directory at `~/Library/Application Scripts/mcp-chrome-bridge/`, which Chrome is permitted to execute from.
+
+The directory contains three files:
+
+| File            | Purpose                                                                                                                                                                                                                                                             |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `run_host.sh`   | Copy of the wrapper script from dist; performs Node.js discovery and logging                                                                                                                                                                                        |
+| `node_path.txt` | Records the Node.js binary path used at install time, ensuring the correct version (and native module ABI) is used at runtime                                                                                                                                       |
+| `index.js`      | Proxy that `require()`s the real `dist/index.js` at its absolute path. Because Node sets `__dirname` to the real file's directory when loading it via `require(absolutePath)`, all relative native-module paths inside the real `index.js` still resolve correctly. |
+
+The Native Messaging host manifest (`~/Library/Application Support/Google/Chrome/NativeMessagingHosts/com.chromemcp.nativehost.json`) points to this launcher directory instead of the dist directory directly.
+
 ### 2. Chrome Extension (`app/chrome-extension/`)
 
 **Purpose**: Browser automation and AI-powered content analysis

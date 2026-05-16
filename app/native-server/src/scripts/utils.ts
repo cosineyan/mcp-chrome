@@ -110,10 +110,62 @@ export function getSystemManifestPath(): string {
 }
 
 /**
+ * Get the macOS Application Scripts directory for the native host.
+ * Chrome can execute scripts from this location without macOS EPERM restrictions
+ * that affect paths like /opt/homebrew/ or ~/Documents/.
+ */
+export function getMacOSAppScriptsDir(): string {
+  return path.join(os.homedir(), 'Library', 'Application Scripts', 'mcp-chrome-bridge');
+}
+
+/**
+ * Set up ~/Library/Application Scripts/mcp-chrome-bridge/ with the files needed
+ * for Chrome to launch the native host. On macOS, Chrome's sandbox blocks execution
+ * of shell scripts from /opt/homebrew/ and ~/Documents/ paths (EPERM/exit 126).
+ * The Application Scripts directory is accessible.
+ *
+ * Copies run_host.sh and node_path.txt from the real dist directory, then writes
+ * a proxy index.js that requires the real index.js (preserving __dirname so
+ * relative native module paths inside the real index.js still resolve correctly).
+ */
+export async function setupMacOSLauncherDir(): Promise<string> {
+  const realDistDir = path.join(__dirname, '..');
+  const launcherDir = getMacOSAppScriptsDir();
+
+  fs.mkdirSync(launcherDir, { recursive: true });
+
+  // Copy run_host.sh
+  const srcScript = path.join(realDistDir, 'run_host.sh');
+  const dstScript = path.join(launcherDir, 'run_host.sh');
+  fs.copyFileSync(srcScript, dstScript);
+  fs.chmodSync(dstScript, '755');
+
+  // Copy node_path.txt so run_host.sh uses the same Node version
+  const srcNodePath = path.join(realDistDir, 'node_path.txt');
+  const dstNodePath = path.join(launcherDir, 'node_path.txt');
+  if (fs.existsSync(srcNodePath)) {
+    fs.copyFileSync(srcNodePath, dstNodePath);
+  }
+
+  // Write a proxy index.js that requires the real one.
+  // Using require(absolutePath) causes Node to set __dirname to realDistDir
+  // when executing the real module, so relative native-module paths still work.
+  const realIndexJs = path.join(realDistDir, 'index.js');
+  const proxyContent = `#!/usr/bin/env node\n"use strict";\nrequire(${JSON.stringify(realIndexJs)});\n`;
+  fs.writeFileSync(path.join(launcherDir, 'index.js'), proxyContent, 'utf8');
+
+  console.log(colorText(`✓ macOS launcher dir prepared at ${launcherDir}`, 'green'));
+  return dstScript;
+}
+
+/**
  * Get native host startup script file path
  */
 export async function getMainPath(): Promise<string> {
   try {
+    if (os.platform() === 'darwin') {
+      return path.join(getMacOSAppScriptsDir(), 'run_host.sh');
+    }
     const packageDistDir = path.join(__dirname, '..');
     const wrapperScriptName = process.platform === 'win32' ? 'run_host.bat' : 'run_host.sh';
     const absoluteWrapperPath = path.resolve(packageDistDir, wrapperScriptName);
@@ -307,10 +359,19 @@ export async function tryRegisterUserLevelHost(
   try {
     console.log(colorText('Attempting to register user-level Native Messaging host...', 'blue'));
 
-    // 1. 确保执行权限
+    // 1. On macOS, set up Application Scripts launcher dir (bypasses Chrome sandbox EPERM)
+    if (os.platform() === 'darwin') {
+      try {
+        await setupMacOSLauncherDir();
+      } catch (err: any) {
+        console.warn(colorText(`⚠️ Failed to set up macOS launcher dir: ${err.message}`, 'yellow'));
+      }
+    }
+
+    // 2. 确保执行权限
     await ensureExecutionPermissions();
 
-    // 2. 确定要注册的浏览器
+    // 3. 确定要注册的浏览器
     const browsersToRegister = targetBrowsers || detectInstalledBrowsers();
     if (browsersToRegister.length === 0) {
       // 如果没有检测到浏览器，默认注册Chrome和Chromium
@@ -326,13 +387,13 @@ export async function tryRegisterUserLevelHost(
       console.log(colorText(`Using custom extension ID: ${extensionId}`, 'blue'));
     }
 
-    // 3. 创建清单内容
+    // 4. 创建清单内容
     const manifest = await createManifestContent(extensionId);
 
     let successCount = 0;
     const results: { browser: string; success: boolean; error?: string }[] = [];
 
-    // 4. 为每个浏览器注册
+    // 5. 为每个浏览器注册
     for (const browserType of browsersToRegister) {
       const config = getBrowserConfig(browserType);
       console.log(colorText(`\nRegistering for ${config.displayName}...`, 'blue'));
@@ -373,7 +434,7 @@ export async function tryRegisterUserLevelHost(
       }
     }
 
-    // 5. 报告结果
+    // 6. 报告结果
     console.log(colorText('\n===== Registration Summary =====', 'blue'));
     for (const result of results) {
       if (result.success) {
