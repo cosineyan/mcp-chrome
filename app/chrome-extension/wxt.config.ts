@@ -39,6 +39,7 @@ export default defineConfig({
     description: '__MSG_extensionDescription__',
     permissions: [
       'nativeMessaging',
+      'cookies',
       'tabs',
       'activeTab',
       'scripting',

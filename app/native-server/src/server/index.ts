@@ -171,7 +171,9 @@ export class Server {
   private setupBrowserProxyRoutes(): void {
     this.fastify.post('/browser', async (request: FastifyRequest, reply: FastifyReply) => {
       if (!this.nativeHost) {
-        return reply.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).send({ ok: false, error: 'Native host not available' });
+        return reply
+          .status(HTTP_STATUS.INTERNAL_SERVER_ERROR)
+          .send({ ok: false, error: 'Native host not available' });
       }
 
       const body = request.body as Record<string, any>;
@@ -184,10 +186,14 @@ export class Server {
             NativeMessageType.CALL_TOOL,
             30000,
           );
-          if (resp.status !== 'success') throw new Error(resp.error || 'Failed to get windows and tabs');
+          if (resp.status !== 'success')
+            throw new Error(resp.error || 'Failed to get windows and tabs');
           const toolResult = resp.data as { content: { type: string; text: string }[] };
           const parsed = JSON.parse(toolResult.content[0].text) as {
-            windows: { windowId: number; tabs: { tabId: number; url: string; title: string; active: boolean }[] }[];
+            windows: {
+              windowId: number;
+              tabs: { tabId: number; url: string; title: string; active: boolean }[];
+            }[];
           };
           const sessions = parsed.windows.flatMap((w) =>
             w.tabs.map((t) => ({ id: t.tabId, url: t.url, title: t.title })),
@@ -205,7 +211,10 @@ export class Server {
           );
           if (resp.status !== 'success') throw new Error(resp.error || 'Failed to open tab');
           const toolResult = resp.data as { content: { type: string; text: string }[] };
-          const result = JSON.parse(toolResult.content[0].text) as { tabId?: number; tabs?: { tabId: number }[] };
+          const result = JSON.parse(toolResult.content[0].text) as {
+            tabId?: number;
+            tabs?: { tabId: number }[];
+          };
           const tabId = result.tabId ?? result.tabs?.[0]?.tabId;
           if (tabId == null) throw new Error('No tabId in navigate response');
           return reply.status(HTTP_STATUS.OK).send({ ok: true, data: { sessionId: tabId } });
@@ -213,8 +222,10 @@ export class Server {
 
         if (command === 'exec') {
           const { sessionId, code, timeout = 15 } = body;
-          if (typeof sessionId !== 'number') return reply.status(400).send({ ok: false, error: 'sessionId (number) is required' });
-          if (typeof code !== 'string') return reply.status(400).send({ ok: false, error: 'code (string) is required' });
+          if (typeof sessionId !== 'number')
+            return reply.status(400).send({ ok: false, error: 'sessionId (number) is required' });
+          if (typeof code !== 'string')
+            return reply.status(400).send({ ok: false, error: 'code (string) is required' });
           const timeoutMs = timeout * 1000;
           const resp = await this.nativeHost.sendRequestToExtensionAndWait(
             { tabId: sessionId, code, timeoutMs },
@@ -227,13 +238,59 @@ export class Server {
 
         if (command === 'close-tab') {
           const { sessionId } = body;
-          if (typeof sessionId !== 'number') return reply.status(400).send({ ok: false, error: 'sessionId (number) is required' });
-          await this.nativeHost.sendRequestToExtensionAndWait(
-            { name: 'chrome_close_tabs', args: { tabIds: [sessionId] } },
-            NativeMessageType.CALL_TOOL,
-            10000,
-          ).catch(() => {/* ignore close errors */});
+          if (typeof sessionId !== 'number')
+            return reply.status(400).send({ ok: false, error: 'sessionId (number) is required' });
+          await this.nativeHost
+            .sendRequestToExtensionAndWait(
+              { name: 'chrome_close_tabs', args: { tabIds: [sessionId] } },
+              NativeMessageType.CALL_TOOL,
+              10000,
+            )
+            .catch(() => {
+              /* ignore close errors */
+            });
           return reply.status(HTTP_STATUS.OK).send({ ok: true });
+        }
+
+        if (command === 'get-cookies') {
+          const { domain } = body;
+          if (typeof domain !== 'string')
+            return reply.status(400).send({ ok: false, error: 'domain (string) is required' });
+          const resp = await this.nativeHost.sendRequestToExtensionAndWait(
+            { domain },
+            NativeMessageType.GET_COOKIES,
+            10000,
+          );
+          if (resp.status !== 'success') throw new Error(resp.error || 'Failed to get cookies');
+          return reply
+            .status(HTTP_STATUS.OK)
+            .send({ ok: true, cookieHeader: resp.cookieHeader, cookies: resp.cookies });
+        }
+
+        if (command === 'fetch') {
+          const {
+            url,
+            method = 'GET',
+            headers: fetchHeaders,
+            body: fetchBody,
+            timeout = 30,
+          } = body;
+          if (typeof url !== 'string')
+            return reply.status(400).send({ ok: false, error: 'url (string) is required' });
+          const resp = await this.nativeHost.sendRequestToExtensionAndWait(
+            { url, method, headers: fetchHeaders, body: fetchBody, timeoutMs: timeout * 1000 },
+            NativeMessageType.FETCH_FROM_TAB,
+            timeout * 1000 + 5000,
+          );
+          if (resp.status !== 'success') throw new Error(resp.error || 'Fetch failed');
+          return reply
+            .status(HTTP_STATUS.OK)
+            .send({
+              ok: true,
+              statusCode: resp.statusCode,
+              headers: resp.headers,
+              body: resp.body,
+            });
         }
 
         return reply.status(400).send({ ok: false, error: `Unknown command: ${command}` });

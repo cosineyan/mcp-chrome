@@ -400,12 +400,24 @@ export function connectNativeHost(port: number = NATIVE_HOST.DEFAULT_PORT): bool
                     const key = localStorage.key(i)!;
                     if (!key.includes('accesstoken')) continue;
                     let val: { secret?: string; expiresOn?: string } | null = null;
-                    try { val = JSON.parse(localStorage.getItem(key)!); } catch { continue; }
+                    try {
+                      val = JSON.parse(localStorage.getItem(key)!);
+                    } catch {
+                      continue;
+                    }
                     if (!val?.secret) continue;
-                    if (!graph && (key.includes('graph.microsoft.com') || key.includes('00000003-0000-0000-c000-000000000000'))) {
+                    if (
+                      !graph &&
+                      (key.includes('graph.microsoft.com') ||
+                        key.includes('00000003-0000-0000-c000-000000000000'))
+                    ) {
                       graph = { token: val.secret, expiresOn: parseInt(val.expiresOn ?? '0') };
                     }
-                    if (!rest && key.includes('outlook.office.com') && key.includes('mail.readwrite')) {
+                    if (
+                      !rest &&
+                      key.includes('outlook.office.com') &&
+                      key.includes('mail.readwrite')
+                    ) {
                       rest = { token: val.secret, expiresOn: parseInt(val.expiresOn ?? '0') };
                     }
                     if (graph && rest) break;
@@ -415,15 +427,24 @@ export function connectNativeHost(port: number = NATIVE_HOST.DEFAULT_PORT): bool
                   for (let i = 0; i < localStorage.length; i++) {
                     const key = localStorage.key(i)!;
                     if (!key.includes('refreshtoken')) continue;
-                    let val: { secret?: string; clientId?: string; homeAccountId?: string } | null = null;
-                    try { val = JSON.parse(localStorage.getItem(key)!); } catch { continue; }
+                    let val: { secret?: string; clientId?: string; homeAccountId?: string } | null =
+                      null;
+                    try {
+                      val = JSON.parse(localStorage.getItem(key)!);
+                    } catch {
+                      continue;
+                    }
                     if (val?.secret && val?.clientId) {
                       let tenantId: string | null = null;
                       if (val.homeAccountId) {
                         const parts = val.homeAccountId.split('.');
                         if (parts.length >= 2) tenantId = parts[1];
                       }
-                      return JSON.stringify({ refreshToken: val.secret, clientId: val.clientId, tenantId });
+                      return JSON.stringify({
+                        refreshToken: val.secret,
+                        clientId: val.clientId,
+                        tenantId,
+                      });
                     }
                   }
                   return JSON.stringify(null);
@@ -433,13 +454,93 @@ export function connectNativeHost(port: number = NATIVE_HOST.DEFAULT_PORT): bool
               args: [code],
             }),
             new Promise<never>((_, reject) =>
-              setTimeout(() => reject(new Error(`exec_tab_js timed out after ${execTimeoutMs}ms`)), execTimeoutMs),
+              setTimeout(
+                () => reject(new Error(`exec_tab_js timed out after ${execTimeoutMs}ms`)),
+                execTimeoutMs,
+              ),
             ),
           ]);
           const rawResult = (results as chrome.scripting.InjectionResult[])?.[0]?.result;
           nativePort?.postMessage({
             responseToRequestId: requestId,
             payload: { status: 'success', data: rawResult },
+          });
+        } catch (error) {
+          nativePort?.postMessage({
+            responseToRequestId: requestId,
+            payload: {
+              status: 'error',
+              error: error instanceof Error ? error.message : String(error),
+            },
+          });
+        }
+      } else if (message.type === NativeMessageType.GET_COOKIES && message.requestId) {
+        const requestId = message.requestId;
+        const { domain } = message.payload || {};
+        try {
+          if (typeof domain !== 'string') throw new Error('domain (string) is required');
+          const cookies = await chrome.cookies.getAll({ domain });
+          const cookieHeader = cookies.map((c) => `${c.name}=${c.value}`).join('; ');
+          nativePort?.postMessage({
+            responseToRequestId: requestId,
+            payload: { status: 'success', cookieHeader, cookies },
+          });
+        } catch (error) {
+          nativePort?.postMessage({
+            responseToRequestId: requestId,
+            payload: {
+              status: 'error',
+              error: error instanceof Error ? error.message : String(error),
+            },
+          });
+        }
+      } else if (message.type === NativeMessageType.FETCH_FROM_TAB && message.requestId) {
+        const requestId = message.requestId;
+        const {
+          url,
+          method = 'GET',
+          headers: reqHeaders,
+          body: reqBody,
+          timeoutMs = 30000,
+        } = message.payload || {};
+        try {
+          if (typeof url !== 'string') throw new Error('url (string) is required');
+          const controller = new AbortController();
+          const timer = setTimeout(() => controller.abort(), timeoutMs);
+          const opts: RequestInit = {
+            method: (method as string).toUpperCase(),
+            credentials: 'include',
+            signal: controller.signal,
+          };
+          if (reqHeaders) opts.headers = reqHeaders as HeadersInit;
+          if (reqBody != null) {
+            opts.body = typeof reqBody === 'string' ? reqBody : JSON.stringify(reqBody);
+          }
+          const resp = await fetch(url, opts);
+          clearTimeout(timer);
+          const respHeaders: Record<string, string> = {};
+          resp.headers.forEach((value, key) => {
+            respHeaders[key] = value;
+          });
+          const ct = respHeaders['content-type'] || '';
+          let respBody: unknown;
+          if (ct.includes('application/json')) {
+            try {
+              respBody = await resp.json();
+            } catch {
+              respBody = await resp.text();
+            }
+          } else {
+            respBody = await resp.text();
+          }
+          nativePort?.postMessage({
+            responseToRequestId: requestId,
+            payload: {
+              status: 'success',
+              statusCode: resp.status,
+              headers: respHeaders,
+              body: respBody,
+            },
           });
         } catch (error) {
           nativePort?.postMessage({

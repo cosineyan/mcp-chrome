@@ -12,6 +12,10 @@ export enum NativeMessageType {
   CALL_TOOL_RESPONSE = 'call_tool_response',
   // Execute JS in a tab without output sanitization (for trusted local callers only)
   EXEC_TAB_JS = 'exec_tab_js',
+  // Get all cookies for a domain (including HttpOnly) — for trusted local callers only
+  GET_COOKIES = 'get_cookies',
+  // Fetch a URL from the browser context (with cookies) — for trusted local callers only
+  FETCH_FROM_TAB = 'fetch_from_tab',
   // Additional message types used in Chrome extension
   SERVER_STARTED = 'server_started',
   SERVER_STOPPED = 'server_stopped',
