@@ -7,7 +7,7 @@
  * 3. 深度对象序列化
  */
 
-export const DEFAULT_MAX_OUTPUT_BYTES = 50 * 1024;
+export const DEFAULT_MAX_OUTPUT_BYTES = 100 * 1024;
 
 export interface OutputSanitizerOptions {
   maxBytes?: number;
@@ -27,7 +27,7 @@ export interface SanitizedOutput {
 const DEFAULT_MAX_DEPTH = 6;
 const DEFAULT_MAX_ARRAY_LENGTH = 200;
 const DEFAULT_MAX_OBJECT_KEYS = 200;
-const DEFAULT_MAX_STRING_LENGTH = 10_000;
+const DEFAULT_MAX_STRING_LENGTH = 100_000;
 
 // 敏感 key 标识符（会被脱敏）
 // 参考 mcp-tools.js 的敏感 key 列表
@@ -123,11 +123,6 @@ export function sanitizeText(text: string): { text: string; redacted: boolean } 
     }
   }
 
-  // Base64 编码数据检测（20+ 字符的 Base64 字符串）
-  if (/^[A-Za-z0-9+/]{20,}={0,2}$/.test(out)) {
-    return { text: '[BLOCKED: Base64 encoded data]', redacted: true };
-  }
-
   // Hex credential 检测（32+ 字符的纯十六进制）
   if (/^[a-f0-9]{32,}$/i.test(out)) {
     return { text: '[BLOCKED: Hex credential]', redacted: true };
@@ -150,9 +145,6 @@ export function sanitizeText(text: string): { text: string; redacted: boolean } 
     /\b(authorization|cookie|set-cookie|x-api-key|api_key|apikey|password|passwd|pwd|secret|token|access_token|refresh_token|id_token|session|sid|credential|private_key|oauth)\b\s*[:=]\s*([^\s,;"']+)/gi,
     (_m, key) => `${key}=<redacted>`,
   );
-
-  // 6. 内嵌的 Base64 数据（在混合内容中）
-  replace(/\b[A-Za-z0-9+/]{40,}={0,2}\b/g, '<redacted_base64>');
 
   // 7. 内嵌的长 Hex 字符串（可能是 API key、hash 等）
   replace(/\b[a-f0-9]{40,}\b/gi, '<redacted_hex>');
