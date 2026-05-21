@@ -1,6 +1,6 @@
 name: Release Native Server Binaries
 
-on:
+"on":
   push:
     tags:
       - 'v*.*.*'
@@ -9,6 +9,7 @@ on:
       tag:
         description: 'Release tag (e.g. v1.0.30)'
         required: true
+        type: string
 
 jobs:
   build-and-release:
