@@ -1,6 +1,6 @@
 name: Release Native Server Binaries
 
-"on":
+on:
   push:
     tags:
       - 'v*.*.*'
