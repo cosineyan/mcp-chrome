@@ -1294,6 +1294,32 @@ export class ClaudeEngine implements AgentEngine {
   }
 
   /**
+   * Read the env block from ~/.claude/settings.json and return it as a plain
+   * string-to-string map.  Returns an empty object if the file is absent or
+   * unparseable — callers must treat missing entries as a no-op.
+   */
+  private async readClaudeSettingsEnv(): Promise<Record<string, string>> {
+    try {
+      const settingsPath = path.join(os.homedir(), '.claude', 'settings.json');
+      const content = await readFile(settingsPath, 'utf-8');
+      const settings = JSON.parse(content) as Record<string, unknown>;
+      const rawEnv = settings.env;
+      if (rawEnv && typeof rawEnv === 'object' && !Array.isArray(rawEnv)) {
+        const result: Record<string, string> = {};
+        for (const [key, value] of Object.entries(rawEnv)) {
+          if (typeof value === 'string') {
+            result[key] = value;
+          }
+        }
+        return result;
+      }
+    } catch {
+      // File missing or parse error → no settings env
+    }
+    return {};
+  }
+
+  /**
    * Supports Claude Code Router (CCR) when useCcr is true:
    * 1. Auto-detecting CCR from config file (~/.claude-code-router/config.json)
    * 2. Passing through env vars if already set (via `eval "$(ccr activate)"`)
@@ -1305,6 +1331,15 @@ export class ClaudeEngine implements AgentEngine {
    */
   private async buildClaudeEnv(useCcr?: boolean): Promise<NodeJS.ProcessEnv> {
     const env: NodeJS.ProcessEnv = { ...process.env };
+
+    // Merge env vars from ~/.claude/settings.json.
+    // Claude Code CLI reads this block and applies it to its own process automatically.
+    // We mirror it here so that guards like !env.ANTHROPIC_BASE_URL reflect the user's
+    // effective configuration — not just what happens to be in the shell environment
+    // when Chrome launches the native messaging host.
+    // settings.json values take precedence over process.env to match CLI behaviour.
+    const settingsEnv = await this.readClaudeSettingsEnv();
+    Object.assign(env, settingsEnv);
 
     // Ensure Node.js bin directory is in PATH (for child processes)
     const nodeBinDir = path.dirname(process.execPath);

@@ -1,10 +1,11 @@
 #!/bin/bash
-# Install mcp-chrome: build native server + register native messaging host.
+# Install mcp-chrome: native server + native messaging host registration.
 # The Chrome extension must be loaded manually (Chrome UI only).
 #
 # Usage:
 #   ./install.sh                        # guided (prompts for extension ID)
 #   ./install.sh --extension-id <id>    # non-interactive
+#   ./install.sh --local-build          # skip prebuilt download, build from source
 
 set -e
 
@@ -13,12 +14,18 @@ NATIVE_SERVER_DIR="$REPO_DIR/app/native-server"
 EXTENSION_DIR="$REPO_DIR/releases/chrome-extension/latest"
 EXTENSION_ZIP="$EXTENSION_DIR/chrome-mcp-server-lastest.zip"
 EXTENSION_UNPACKED="$EXTENSION_DIR/unpacked"
+PREBUILT_DIR="$REPO_DIR/releases/native-server"
+
+GITHUB_REPO="cosineyan/mcp-chrome"
+GITHUB_RELEASES_BASE="https://github.com/$GITHUB_REPO/releases/latest/download"
 
 # --- Parse args ---
 EXTENSION_ID=""
+FORCE_LOCAL_BUILD=false
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --extension-id) EXTENSION_ID="$2"; shift 2 ;;
+    --local-build)  FORCE_LOCAL_BUILD=true; shift ;;
     *) echo "Unknown option: $1"; exit 1 ;;
   esac
 done
@@ -56,26 +63,63 @@ if [ -z "$EXTENSION_ID" ]; then
   fi
 fi
 
-# --- Step 3: Build native server ---
-echo ""
-echo "==> Building native server..."
-cd "$NATIVE_SERVER_DIR"
-if [ ! -d "node_modules" ]; then
-  npm install -q
+# --- Step 3: Resolve native server binary ---
+ARCH="$(uname -m)"
+case "$ARCH" in
+  arm64)             BINARY_NAME="mcp-chrome-bridge-macos-arm64" ;;
+  x86_64 | i386)    BINARY_NAME="mcp-chrome-bridge-macos-x64" ;;
+  *)
+    echo "Warning: unknown arch '$ARCH', falling back to x64 binary."
+    BINARY_NAME="mcp-chrome-bridge-macos-x64" ;;
+esac
+
+NATIVE_BIN=""
+
+if [ "$FORCE_LOCAL_BUILD" = false ]; then
+  # 3a. Check for locally available prebuilt binary
+  LOCAL_PREBUILT="$PREBUILT_DIR/$BINARY_NAME"
+  if [ -x "$LOCAL_PREBUILT" ]; then
+    echo ""
+    echo "==> Using local prebuilt binary: $LOCAL_PREBUILT"
+    NATIVE_BIN="$LOCAL_PREBUILT"
+  else
+    # 3b. Try downloading from GitHub Releases
+    DOWNLOAD_URL="$GITHUB_RELEASES_BASE/$BINARY_NAME"
+    DOWNLOAD_DEST="$PREBUILT_DIR/$BINARY_NAME"
+    echo ""
+    echo "==> Downloading prebuilt binary ($ARCH)..."
+    echo "    $DOWNLOAD_URL"
+    mkdir -p "$PREBUILT_DIR"
+    if curl -fsSL --connect-timeout 15 -o "$DOWNLOAD_DEST" "$DOWNLOAD_URL" 2>/dev/null; then
+      chmod +x "$DOWNLOAD_DEST"
+      echo "    Downloaded: $DOWNLOAD_DEST"
+      NATIVE_BIN="$DOWNLOAD_DEST"
+    else
+      echo "    Download failed (no release published yet, or no internet). Falling back to local build."
+    fi
+  fi
 fi
-npm run build --silent
-echo "    Build complete."
 
-# --- Step 4: Install (npm link) ---
-echo ""
-echo "==> Installing mcp-chrome-bridge globally..."
-npm link --silent
-echo "    Installed: $(mcp-chrome-bridge --version)"
+# 3c. Fallback: build from source
+if [ -z "$NATIVE_BIN" ]; then
+  echo ""
+  echo "==> Building native server from source..."
+  cd "$NATIVE_SERVER_DIR"
+  if [ ! -d "node_modules" ]; then
+    npm install -q
+  fi
+  npm run build --silent
+  echo ""
+  echo "==> Installing mcp-chrome-bridge globally..."
+  npm link --silent
+  echo "    Installed: $(mcp-chrome-bridge --version)"
+  NATIVE_BIN="$(command -v mcp-chrome-bridge)"
+fi
 
-# --- Step 5: Register native messaging host ---
+# --- Step 4: Register native messaging host ---
 echo ""
 echo "==> Registering native messaging host..."
-mcp-chrome-bridge register --extension-id "$EXTENSION_ID" --force
+"$NATIVE_BIN" register --extension-id "$EXTENSION_ID" --force
 echo ""
 echo "=== Done! ==="
 echo ""
