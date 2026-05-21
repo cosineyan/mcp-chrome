@@ -59,5 +59,17 @@ export default tseslint.config(
       '@typescript-eslint/no-unused-vars': 'off',
     },
   },
+  // Browser scripts loaded inside Office taskpane (no module bundler)
+  {
+    files: ['app/ppt-online-extension/**/*.js'],
+    languageOptions: {
+      ecmaVersion: 2021,
+      sourceType: 'script',
+      globals: {
+        ...globals.browser,
+        ...globals.es2021,
+      },
+    },
+  },
   eslintConfigPrettier,
 );
