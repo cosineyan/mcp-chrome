@@ -202,10 +202,10 @@ export class Server {
         }
 
         if (command === 'new-tab') {
-          const { url } = body;
+          const { url, background = true } = body;
           if (!url) return reply.status(400).send({ ok: false, error: 'url is required' });
           const resp = await this.nativeHost.sendRequestToExtensionAndWait(
-            { name: 'chrome_navigate', args: { url, forceNewTab: true, background: true } },
+            { name: 'chrome_navigate', args: { url, forceNewTab: true, background } },
             NativeMessageType.CALL_TOOL,
             30000,
           );
@@ -283,14 +283,12 @@ export class Server {
             timeout * 1000 + 5000,
           );
           if (resp.status !== 'success') throw new Error(resp.error || 'Fetch failed');
-          return reply
-            .status(HTTP_STATUS.OK)
-            .send({
-              ok: true,
-              statusCode: resp.statusCode,
-              headers: resp.headers,
-              body: resp.body,
-            });
+          return reply.status(HTTP_STATUS.OK).send({
+            ok: true,
+            statusCode: resp.statusCode,
+            headers: resp.headers,
+            body: resp.body,
+          });
         }
 
         return reply.status(400).send({ ok: false, error: `Unknown command: ${command}` });
