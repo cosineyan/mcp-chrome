@@ -159,8 +159,11 @@ export default defineConfig({
       }) as any,
     ],
     build: {
-      // 我们的构建产物需要兼容到es6
-      target: 'es2015',
+      // Chrome MV3 requires Chrome 88+ which fully supports ES2022.
+      // es2015 caused async/await to be polyfilled with _asyncToGenerator,
+      // breaking chrome.scripting.executeScript in MAIN world (the polyfill
+      // helpers don't exist in the page context).
+      target: 'es2022',
       // 非生产环境下生成sourcemap
       sourcemap: env.mode !== 'production',
       // 禁用gzip 压缩大小报告，因为压缩大型文件可能会很慢

@@ -1,9 +1,9 @@
 /**
- * JavaScript Tool - CDP Runtime.evaluate with fallback
+ * JavaScript Tool - chrome.scripting (MAIN world) with CDP fallback
  *
  * Execute JavaScript in the browser tab and return the result.
- * - Primary: CDP Runtime.evaluate (supports awaitPromise + returnByValue)
- * - Fallback: chrome.scripting.executeScript (when debugger is busy)
+ * - Primary: chrome.scripting.executeScript in MAIN world (no debugger infobar)
+ * - Fallback: CDP Runtime.evaluate (when scripting API fails, e.g. chrome:// pages)
  *
  * Features:
  * - Async code support (top-level await via async wrapper)
@@ -309,7 +309,7 @@ async function executeViaScripting(
   const innerExecute = async (): Promise<ExecutionResult> => {
     const results = await chrome.scripting.executeScript({
       target: { tabId },
-      world: 'ISOLATED',
+      world: 'MAIN',
       func: async (userCode: string): Promise<ScriptingExecutionResult> => {
         try {
           // Use AsyncFunction constructor to support top-level await
@@ -434,30 +434,26 @@ class JavaScriptTool extends BaseBrowserToolExecutor {
 
       const warnings: string[] = [];
 
-      // Try CDP execution first
-      const cdpResult = await executeViaCdp(tabId, code, options);
-
-      if (cdpResult.ok) {
-        return this.buildSuccessResponse(tabId, cdpResult, startTime);
-      }
-
-      // If not a debugger conflict, return the CDP error
-      if (cdpResult.error.kind !== 'debugger_conflict') {
-        return this.buildErrorResponse(tabId, cdpResult, startTime);
-      }
-
-      // Debugger conflict - fallback to scripting API
-      warnings.push(
-        'Debugger is busy (DevTools or another extension attached). Falling back to chrome.scripting.executeScript (runs in ISOLATED world, not page context).',
-      );
-
+      // Try scripting API first (MAIN world — same as CDP but no debugger infobar)
       const scriptingResult = await executeViaScripting(tabId, code, options);
 
       if (scriptingResult.ok) {
-        return this.buildSuccessResponse(tabId, scriptingResult, startTime, warnings);
+        return this.buildSuccessResponse(tabId, scriptingResult, startTime);
       }
 
-      return this.buildErrorResponse(tabId, scriptingResult, startTime, warnings);
+      // Scripting failed — fall back to CDP (may show debugger bar)
+      warnings.push(
+        `chrome.scripting.executeScript failed (${scriptingResult.error.kind}: ${scriptingResult.error.message}). Falling back to CDP Runtime.evaluate.`,
+      );
+
+      const cdpResult = await executeViaCdp(tabId, code, options);
+
+      if (cdpResult.ok) {
+        return this.buildSuccessResponse(tabId, cdpResult, startTime, warnings);
+      }
+
+      // Both engines failed — return the CDP error (more informative)
+      return this.buildErrorResponse(tabId, cdpResult, startTime, warnings);
     } catch (error) {
       console.error('JavaScriptTool.execute error:', error);
       return createErrorResponse(
