@@ -3,6 +3,8 @@ import tailwindcss from '@tailwindcss/vite';
 import { viteStaticCopy } from 'vite-plugin-static-copy';
 import { config } from 'dotenv';
 import { resolve } from 'path';
+import { writeFileSync } from 'fs';
+import { execSync } from 'child_process';
 import Icons from 'unplugin-icons/vite';
 import Components from 'unplugin-vue-components/vite';
 import IconsResolver from 'unplugin-icons/resolver';
@@ -157,6 +159,29 @@ export default defineConfig({
           // Vite plugin will watch src patterns and re-copy on change
         } as any,
       }) as any,
+      // Write .build-meta.json into the extension output after build.
+      // rgm-office-skill checks this file to detect outdated builds.
+      {
+        name: 'build-meta',
+        closeBundle() {
+          let commit = 'unknown';
+          try {
+            commit = execSync('git rev-parse --short HEAD', { encoding: 'utf-8' }).trim();
+          } catch {}
+          const meta = {
+            buildVersion: 2,
+            commit,
+            date: new Date().toISOString().slice(0, 10),
+          };
+          const outDir = resolve(__dirname, '.output/chrome-mv3');
+          try {
+            writeFileSync(
+              resolve(outDir, '.build-meta.json'),
+              JSON.stringify(meta, null, 2) + '\n',
+            );
+          } catch {}
+        },
+      },
     ],
     build: {
       // Chrome MV3 requires Chrome 88+ which fully supports ES2022.
