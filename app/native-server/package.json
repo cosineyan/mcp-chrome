@@ -40,7 +40,7 @@
     "@fastify/cors": "^11.0.1",
     "@modelcontextprotocol/sdk": "^1.11.0",
     "@types/node-fetch": "2",
-    "better-sqlite3": "^12.10.0",
+    "sql.js": "^1.14.2",
     "chalk": "^5.4.1",
     "chrome-devtools-frontend": "^1.0.1299282",
     "chrome-mcp-shared": "workspace:*",
@@ -54,8 +54,8 @@
   },
   "devDependencies": {
     "@jest/globals": "^29.7.0",
-    "@types/better-sqlite3": "^7.6.12",
     "@types/chrome": "^0.0.318",
+    "@types/sql.js": "^1.4.11",
     "@types/jest": "^29.5.14",
     "@types/node": "^22.15.3",
     "@types/supertest": "^6.0.3",
@@ -89,7 +89,7 @@
   "pkg": {
     "assets": [
       "dist/**/*.json",
-      "node_modules/better-sqlite3/build/Release/*.node"
+      "node_modules/sql.js/dist/sql-wasm.wasm"
     ],
     "scripts": [
       "dist/**/*.js"

@@ -1,32 +1,47 @@
 /**
  * Database client singleton for Agent storage.
  *
+ * Uses sql.js (SQLite compiled to WebAssembly) instead of better-sqlite3
+ * to avoid native C++ addon compilation issues across different Node.js
+ * versions, OS platforms, and architectures.
+ *
  * Design principles:
- * - Lazy initialization - only connect when first accessed
+ * - Async initialization (WASM must be loaded once) via initDb()
+ * - Synchronous access via getDb() after initialization
  * - Singleton pattern - single connection throughout the app lifecycle
  * - Auto-create tables on first run (no migration tool needed)
+ * - Auto-save: dirty flag + periodic flush to disk
  * - Configurable path via environment variable
  */
-import Database from 'better-sqlite3';
-import { drizzle, BetterSQLite3Database } from 'drizzle-orm/better-sqlite3';
-import { sql } from 'drizzle-orm';
+import initSqlJs, { type Database as SqlJsDatabase } from 'sql.js';
+import { drizzle, type SQLJsDatabase } from 'drizzle-orm/sql-js';
 import * as schema from './schema';
 import { getAgentDataDir } from '../storage';
 import path from 'node:path';
-import { existsSync, mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 
 // ============================================================
 // Types
 // ============================================================
 
-export type DrizzleDB = BetterSQLite3Database<typeof schema>;
+export type DrizzleDB = SQLJsDatabase<typeof schema>;
 
 // ============================================================
 // Singleton State
 // ============================================================
 
 let dbInstance: DrizzleDB | null = null;
-let sqliteInstance: Database.Database | null = null;
+let sqliteInstance: SqlJsDatabase | null = null;
+let dbFilePath: string | null = null;
+
+/** Dirty flag — set after any schema init / migration write. */
+let dirty = false;
+
+/** Periodic auto-save interval handle. */
+let autoSaveTimer: ReturnType<typeof setInterval> | null = null;
+
+/** Auto-save interval in milliseconds. */
+const AUTO_SAVE_INTERVAL_MS = 5_000;
 
 // ============================================================
 // Database Path Resolution
@@ -109,45 +124,49 @@ CREATE INDEX IF NOT EXISTS messages_request_id_idx ON messages(request_id);
 PRAGMA foreign_keys = ON;
 `;
 
-/**
- * Migration SQL to add new columns to existing databases.
- * Each migration is idempotent - safe to run multiple times.
- */
-const MIGRATION_SQL = `
--- Add active_claude_session_id column if it doesn't exist (for existing databases)
--- SQLite doesn't support IF NOT EXISTS for columns, so we use a workaround
-`;
-
 // ============================================================
 // Database Initialization
 // ============================================================
 
 /**
  * Check if a column exists in a table.
+ * sql.js exec() returns Array<{ columns: string[], values: any[][] }>
  */
-function columnExists(sqlite: Database.Database, tableName: string, columnName: string): boolean {
-  const result = sqlite.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{ name: string }>;
-  return result.some((col) => col.name === columnName);
+function columnExists(sqlite: SqlJsDatabase, tableName: string, columnName: string): boolean {
+  const result = sqlite.exec(`PRAGMA table_info(${tableName})`);
+  if (result.length === 0) return false;
+  // columns: cid, name, type, notnull, dflt_value, pk
+  const nameIdx = result[0].columns.indexOf('name');
+  return result[0].values.some((row) => row[nameIdx] === columnName);
 }
 
 /**
  * Run migrations for existing databases.
  * Adds new columns that may be missing in older database versions.
  */
-function runMigrations(sqlite: Database.Database): void {
+function runMigrations(sqlite: SqlJsDatabase): void {
+  let migrated = false;
+
   // Migration 1: Add active_claude_session_id column to projects table
   if (!columnExists(sqlite, 'projects', 'active_claude_session_id')) {
-    sqlite.exec('ALTER TABLE projects ADD COLUMN active_claude_session_id TEXT');
+    sqlite.run('ALTER TABLE projects ADD COLUMN active_claude_session_id TEXT');
+    migrated = true;
   }
 
   // Migration 2: Add use_ccr column to projects table
   if (!columnExists(sqlite, 'projects', 'use_ccr')) {
-    sqlite.exec('ALTER TABLE projects ADD COLUMN use_ccr TEXT');
+    sqlite.run('ALTER TABLE projects ADD COLUMN use_ccr TEXT');
+    migrated = true;
   }
 
   // Migration 3: Add enable_chrome_mcp column to projects table (default enabled)
   if (!columnExists(sqlite, 'projects', 'enable_chrome_mcp')) {
-    sqlite.exec("ALTER TABLE projects ADD COLUMN enable_chrome_mcp TEXT NOT NULL DEFAULT '1'");
+    sqlite.run("ALTER TABLE projects ADD COLUMN enable_chrome_mcp TEXT NOT NULL DEFAULT '1'");
+    migrated = true;
+  }
+
+  if (migrated) {
+    dirty = true;
   }
 }
 
@@ -156,9 +175,10 @@ function runMigrations(sqlite: Database.Database): void {
  * Safe to call multiple times - uses IF NOT EXISTS.
  * Also runs migrations for existing databases.
  */
-function initializeSchema(sqlite: Database.Database): void {
-  sqlite.exec(CREATE_TABLES_SQL);
+function initializeSchema(sqlite: SqlJsDatabase): void {
+  sqlite.run(CREATE_TABLES_SQL);
   runMigrations(sqlite);
+  dirty = true;
 }
 
 /**
@@ -172,26 +192,93 @@ function ensureDataDir(): void {
 }
 
 // ============================================================
+// Persistence Helpers
+// ============================================================
+
+/**
+ * Save the in-memory database to disk.
+ * No-op if database is not initialized.
+ */
+export function saveDb(): void {
+  if (!sqliteInstance || !dbFilePath) return;
+  try {
+    const data = sqliteInstance.export();
+    const buffer = Buffer.from(data);
+    writeFileSync(dbFilePath, buffer);
+    dirty = false;
+  } catch (err) {
+    console.error('[db] Failed to save database to disk:', err);
+  }
+}
+
+/**
+ * Mark the database as dirty so the next auto-save flushes it.
+ * Called internally; services do NOT need to call this — the
+ * auto-save interval handles persistence transparently.
+ */
+export function markDirty(): void {
+  dirty = true;
+}
+
+/** Auto-save tick: flush if dirty. */
+function autoSaveTick(): void {
+  if (dirty) {
+    saveDb();
+  }
+}
+
+/** Start the periodic auto-save timer. */
+function startAutoSave(): void {
+  if (autoSaveTimer) return;
+  autoSaveTimer = setInterval(autoSaveTick, AUTO_SAVE_INTERVAL_MS);
+  // Allow the process to exit even if the timer is active
+  if (autoSaveTimer && typeof autoSaveTimer === 'object' && 'unref' in autoSaveTimer) {
+    autoSaveTimer.unref();
+  }
+}
+
+/** Stop the periodic auto-save timer. */
+function stopAutoSave(): void {
+  if (autoSaveTimer) {
+    clearInterval(autoSaveTimer);
+    autoSaveTimer = null;
+  }
+}
+
+// ============================================================
 // Public API
 // ============================================================
 
 /**
- * Get the Drizzle database instance.
- * Lazily initializes the connection and schema on first call.
+ * Initialize the database asynchronously.
+ *
+ * Must be called once during server startup (before any getDb() call).
+ * Loads the sql.js WASM binary, opens or creates the database file,
+ * runs schema initialisation and migrations, and starts the auto-save
+ * timer.
+ *
+ * Safe to call multiple times — subsequent calls are no-ops.
  */
-export function getDb(): DrizzleDB {
-  if (dbInstance) {
-    return dbInstance;
-  }
+export async function initDb(): Promise<void> {
+  if (dbInstance) return; // already initialised
 
   ensureDataDir();
-  const dbPath = getDatabasePath();
+  dbFilePath = getDatabasePath();
 
-  // Create SQLite connection
-  sqliteInstance = new Database(dbPath);
+  // Initialise sql.js (loads WASM)
+  const SQL = await initSqlJs();
 
-  // Enable WAL mode for better concurrent read performance
-  sqliteInstance.pragma('journal_mode = WAL');
+  // Open existing database or create a new one
+  if (existsSync(dbFilePath)) {
+    const fileBuffer = readFileSync(dbFilePath);
+    sqliteInstance = new SQL.Database(fileBuffer);
+  } else {
+    sqliteInstance = new SQL.Database();
+  }
+
+  // Enable WAL mode equivalent — sql.js is in-memory so WAL is not
+  // applicable, but we still enable foreign keys.
+  sqliteInstance.run('PRAGMA foreign_keys = ON');
 
   // Initialize schema
   initializeSchema(sqliteInstance);
@@ -199,34 +286,60 @@ export function getDb(): DrizzleDB {
   // Create Drizzle instance
   dbInstance = drizzle(sqliteInstance, { schema });
 
+  // Persist any schema changes immediately
+  saveDb();
+
+  // Start periodic auto-save
+  startAutoSave();
+
+  // Hook into drizzle to mark dirty on every write operation.
+  // We wrap the underlying sql.js Database.run / Database.exec so any
+  // INSERT / UPDATE / DELETE executed by drizzle (or raw SQL) triggers
+  // a dirty flag automatically — no changes needed in service files.
+  const origRun = sqliteInstance.run.bind(sqliteInstance);
+  const origExec = sqliteInstance.exec.bind(sqliteInstance);
+
+  sqliteInstance.run = function (...args: Parameters<SqlJsDatabase['run']>) {
+    const result = origRun(...args);
+    dirty = true;
+    return result;
+  } as SqlJsDatabase['run'];
+
+  sqliteInstance.exec = function (...args: Parameters<SqlJsDatabase['exec']>) {
+    const result = origExec(...args);
+    dirty = true;
+    return result;
+  } as SqlJsDatabase['exec'];
+}
+
+/**
+ * Get the Drizzle database instance (synchronous).
+ *
+ * Throws if initDb() has not been called yet.
+ */
+export function getDb(): DrizzleDB {
+  if (!dbInstance) {
+    throw new Error(
+      'Database not initialised. Call initDb() during server startup before accessing the database.',
+    );
+  }
   return dbInstance;
 }
 
 /**
  * Close the database connection.
+ * Saves to disk, stops auto-save, and releases the sql.js instance.
  * Should be called on graceful shutdown.
  */
 export function closeDb(): void {
+  stopAutoSave();
   if (sqliteInstance) {
+    // Final save
+    saveDb();
     sqliteInstance.close();
     sqliteInstance = null;
     dbInstance = null;
+    dbFilePath = null;
+    dirty = false;
   }
-}
-
-/**
- * Check if database is initialized.
- */
-export function isDbInitialized(): boolean {
-  return dbInstance !== null;
-}
-
-/**
- * Execute raw SQL (for advanced use cases).
- */
-export function execRawSql(sqlStr: string): void {
-  if (!sqliteInstance) {
-    getDb(); // Initialize if not already
-  }
-  sqliteInstance!.exec(sqlStr);
 }

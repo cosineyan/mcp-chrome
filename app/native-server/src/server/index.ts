@@ -27,7 +27,7 @@ import { AgentStreamManager } from '../agent/stream-manager';
 import { AgentChatService } from '../agent/chat-service';
 import { CodexEngine } from '../agent/engines/codex';
 import { ClaudeEngine } from '../agent/engines/claude';
-import { closeDb } from '../agent/db';
+import { closeDb, initDb } from '../agent/db';
 import { registerAgentRoutes } from './routes';
 import { NativeMessageType } from 'chrome-mcp-shared';
 
@@ -283,14 +283,12 @@ export class Server {
             timeout * 1000 + 5000,
           );
           if (resp.status !== 'success') throw new Error(resp.error || 'Fetch failed');
-          return reply
-            .status(HTTP_STATUS.OK)
-            .send({
-              ok: true,
-              statusCode: resp.statusCode,
-              headers: resp.headers,
-              body: resp.body,
-            });
+          return reply.status(HTTP_STATUS.OK).send({
+            ok: true,
+            statusCode: resp.statusCode,
+            headers: resp.headers,
+            body: resp.body,
+          });
         }
 
         return reply.status(400).send({ ok: false, error: `Unknown command: ${command}` });
@@ -471,6 +469,9 @@ export class Server {
     }
 
     try {
+      // Initialize sql.js database (loads WASM, opens/creates .db file)
+      await initDb();
+
       await this.fastify.listen({ port, host: SERVER_CONFIG.HOST });
 
       // Set port environment variables after successful listen for Chrome MCP URL resolution
