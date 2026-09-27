@@ -38,6 +38,8 @@ metadata-v1.3/
 registry.npmmirror.com/
 registry.npmjs.com/
 
+releases/
+
 other/
 tools_optimize.md
 Agents.md
