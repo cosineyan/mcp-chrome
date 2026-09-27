@@ -12,6 +12,7 @@
     "dev": "nodemon --watch src --ext ts,js,json --ignore dist/ --exec \"npm run build && npm run register:dev\"",
     "build": "ts-node src/scripts/build.ts",
     "build:release": "bash scripts/build-release.sh",
+    "pack:release": "bash scripts/pack-bridge.sh",
     "test": "jest",
     "test:watch": "jest --watch",
     "lint": "eslint 'src/**/*.{js,ts}'",

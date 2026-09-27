@@ -1,4 +1,4 @@
-name: Release Native Server Binaries
+name: Release Native Server
 
 on:
   push:
@@ -33,8 +33,19 @@ jobs:
       - name: Install dependencies
         run: pnpm install
 
-      - name: Build native server binaries
-        run: pnpm --filter mcp-chrome-bridge build:release
+      - name: Build shared package
+        run: pnpm --filter chrome-mcp-shared build
+
+      - name: Build Chrome extension
+        run: |
+          cd app/chrome-extension
+          pnpm build
+          cd ../..
+          mkdir -p releases
+          tar -czf releases/mcp-chrome-plugin.tgz -C app/chrome-extension/.output/chrome-mv3 .
+
+      - name: Pack pre-built bridge (Node.js tgz)
+        run: pnpm --filter mcp-chrome-bridge pack:release
 
       - name: Determine release tag
         id: tag
@@ -51,7 +62,7 @@ jobs:
           tag_name: ${{ steps.tag.outputs.name }}
           name: ${{ steps.tag.outputs.name }}
           files: |
-            releases/native-server/mcp-chrome-bridge-macos-arm64
-            releases/native-server/mcp-chrome-bridge-macos-x64
+            releases/mcp-chrome-bridge.tgz
+            releases/mcp-chrome-plugin.tgz
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
