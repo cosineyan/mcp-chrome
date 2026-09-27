@@ -10,7 +10,11 @@ import IconsResolver from 'unplugin-icons/resolver';
 config({ path: resolve(process.cwd(), '.env') });
 config({ path: resolve(process.cwd(), '.env.local') });
 
-const CHROME_EXTENSION_KEY = process.env.CHROME_EXTENSION_KEY;
+// Deterministic extension ID: kcjeddeiaabcfmjcnfmiamacmlmfkjdl
+// Generated from RSA key pair; env var override still supported for custom builds.
+const CHROME_EXTENSION_KEY =
+  process.env.CHROME_EXTENSION_KEY ||
+  'MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAyKsv+vTnzmhRZvncMV8W0LjRGdRxHrnovsLGqEYc0pQNBWGwWzXrI2MYRqEye1VEFfO0hHNmt8EzdlsVwTuXwTjecWIeWhJ8UrB9mmnccXPInzVL+xgX8gIhcDEWRYaDqwPaCvAWiP5neizlNhOM4RT9ute36ac7xC6q1W59d5RluMGORh/nPXtv70gcxPjaP/8k66Dys3rtdjsLDV7rk7Us498l5X/RAiyA8kOPl8brTCUap7HnKE4GUVkbX4FS6Ae7KQgIyPPjZOawrIwjmlBdVZuw5C+ApI/QgHzt/NwI5PBEynSsXru3LsUgTBtLLlBJsEes2DGjeXfKcYukQQIDAQAB';
 // Detect dev mode early for manifest-level switches
 const IS_DEV = process.env.NODE_ENV !== 'production' && process.env.MODE !== 'production';
 
