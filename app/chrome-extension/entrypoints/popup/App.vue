@@ -27,6 +27,17 @@
                 <span :class="['status-dot', getStatusClass()]"></span>
                 <span class="status-text">{{ getStatusText() }}</span>
               </div>
+              <div
+                v-if="nativeConnectionStatus === 'disconnected' && disconnectDiagnosis"
+                class="mt-2 px-3 py-2 rounded-md bg-amber-50 border border-amber-200 text-xs text-amber-800"
+              >
+                <p class="font-medium">⚠️ {{ disconnectDiagnosis }}</p>
+                <a
+                  class="underline text-amber-600 cursor-pointer mt-1 inline-block"
+                  @click="openTroubleshooting"
+                  >{{ getMessage('checkTroubleshooting') || 'See troubleshooting guide' }}</a
+                >
+              </div>
               <div v-if="serverStatus.lastUpdated" class="status-timestamp">
                 {{ getMessage('lastUpdatedLabel') }}
                 {{ new Date(serverStatus.lastUpdated).toLocaleTimeString() }}
@@ -520,9 +531,28 @@ const serverStatus = ref<{
   isRunning: boolean;
   port?: number;
   lastUpdated: number;
+  disconnectReason?: string;
 }>({
   isRunning: false,
   lastUpdated: Date.now(),
+});
+
+/**
+ * Map disconnect reason key to user-facing diagnosis text.
+ */
+const DISCONNECT_DIAGNOSIS_MAP: Record<string, string> = {
+  nativeHostNotInstalled:
+    'Native host is not registered. Please run the setup/install script first.',
+  nativeHostExited:
+    'Native host process exited unexpectedly. Common cause: Node.js is not installed or not in PATH. Please install Node.js v18+.',
+  nativeHostForbidden:
+    'Extension ID mismatch. The native host does not allow this extension. Please re-run the setup script.',
+};
+
+const disconnectDiagnosis = computed(() => {
+  const key = serverStatus.value.disconnectReason;
+  if (!key) return '';
+  return DISCONNECT_DIAGNOSIS_MAP[key] || key;
 });
 
 const showMcpConfig = computed(() => {

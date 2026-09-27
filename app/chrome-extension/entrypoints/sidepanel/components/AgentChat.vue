@@ -32,6 +32,7 @@
             :project-label="projectLabel"
             :session-label="sessionLabel"
             :connection-state="connectionState"
+            :disconnect-reason="server.serverStatus.value?.disconnectReason"
             :show-back-button="true"
             :brand-label="engineDisplayName"
             @toggle:project-menu="toggleProjectMenu"

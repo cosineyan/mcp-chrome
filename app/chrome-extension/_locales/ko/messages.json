@@ -442,5 +442,9 @@
   "pagesUnit": {
     "message": "페이지",
     "description": "페이지 수 단위"
+  },
+  "checkTroubleshooting": {
+    "message": "문제 해결 가이드 보기",
+    "description": "네이티브 호스트 연결 실패 시 문제 해결 링크"
   }
 }

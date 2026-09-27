@@ -34,6 +34,35 @@ interface ServerStatus {
   isRunning: boolean;
   port?: number;
   lastUpdated: number;
+  disconnectReason?: string;
+}
+
+// ==================== Disconnect Reason Diagnosis ====================
+
+/**
+ * Map Chrome's native messaging lastError to a user-friendly diagnosis key.
+ * Returns an i18n message key that the UI can resolve.
+ */
+function diagnoseDisconnectReason(lastError: string | undefined): string | undefined {
+  if (!lastError) return undefined;
+  const msg = lastError.toLowerCase();
+  if (msg.includes('not found')) {
+    // "Specified native messaging host not found."
+    // → manifest missing or host name mismatch — user hasn't run setup
+    return 'nativeHostNotInstalled';
+  }
+  if (msg.includes('has exited')) {
+    // "Native host has exited."
+    // → process started but crashed immediately — Node.js missing or script error
+    return 'nativeHostExited';
+  }
+  if (msg.includes('forbidden')) {
+    // "Access to the specified native messaging host is forbidden."
+    // → extension ID not in allowed_origins
+    return 'nativeHostForbidden';
+  }
+  // Unknown error — return the raw message
+  return lastError;
 }
 
 let currentServerStatus: ServerStatus = {
@@ -256,11 +285,12 @@ function scheduleReconnect(reason: string): void {
 /**
  * Mark server as stopped and broadcast the change.
  */
-async function markServerStopped(reason: string): Promise<void> {
+async function markServerStopped(reason: string, disconnectReason?: string): Promise<void> {
   currentServerStatus = {
     isRunning: false,
     port: currentServerStatus.port,
     lastUpdated: Date.now(),
+    ...(disconnectReason ? { disconnectReason } : {}),
   };
   try {
     await saveServerStatus(currentServerStatus);
@@ -268,7 +298,9 @@ async function markServerStopped(reason: string): Promise<void> {
     // Ignore
   }
   broadcastServerStatusChange(currentServerStatus);
-  console.debug(`${LOG_PREFIX} Server marked stopped (${reason})`);
+  console.debug(
+    `${LOG_PREFIX} Server marked stopped (${reason}${disconnectReason ? `, diagnosis: ${disconnectReason}` : ''})`,
+  );
 }
 
 // ==================== Core Ensure Function ====================
@@ -585,8 +617,11 @@ export function connectNativeHost(port: number = NATIVE_HOST.DEFAULT_PORT): bool
           isRunning: true,
           port: port,
           lastUpdated: Date.now(),
+          // Clear any previous disconnect reason on successful start
         };
         await saveServerStatus(currentServerStatus);
+        // Clear persisted disconnect reason
+        chrome.storage.local.remove(STORAGE_KEYS.NATIVE_DISCONNECT_REASON).catch(() => {});
         broadcastServerStatusChange(currentServerStatus);
         // Server is confirmed running - now we can reset reconnect state
         resetReconnectState();
@@ -611,11 +646,20 @@ export function connectNativeHost(port: number = NATIVE_HOST.DEFAULT_PORT): bool
     });
 
     nativePort.onDisconnect.addListener(() => {
-      console.warn(ERROR_MESSAGES.NATIVE_DISCONNECTED, chrome.runtime.lastError);
+      const lastErrorMsg = chrome.runtime.lastError?.message;
+      console.warn(ERROR_MESSAGES.NATIVE_DISCONNECTED, lastErrorMsg);
       nativePort = null;
 
+      // Diagnose and persist the disconnect reason for UI display
+      const reason = diagnoseDisconnectReason(lastErrorMsg);
+      if (reason) {
+        chrome.storage.local
+          .set({ [STORAGE_KEYS.NATIVE_DISCONNECT_REASON]: reason })
+          .catch(() => {});
+      }
+
       // Mark server as stopped since native host disconnection means server is down
-      void markServerStopped('native_port_disconnected');
+      void markServerStopped('native_port_disconnected', reason);
 
       // Handle reconnection based on disconnect reason
       if (manualDisconnect) {

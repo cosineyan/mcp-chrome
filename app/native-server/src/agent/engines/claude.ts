@@ -1,12 +1,59 @@
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import os from 'node:os';
+import fs from 'node:fs';
 import { readFile } from 'node:fs/promises';
+import { execSync } from 'node:child_process';
 import type { AgentEngine, EngineExecutionContext, EngineInitOptions } from './types';
 import type { AgentMessage, RealtimeEvent } from '../types';
 import { detectCcr, validateCcrConfig } from '../ccr-detector';
 import { getProject } from '../project-service';
 import { getChromeMcpUrl } from '../../constant';
+
+/**
+ * Locate the Claude Code CLI executable on the system.
+ * Result is cached after first call to avoid repeated shell exec overhead.
+ */
+let _cachedClaudeCodePath: string | undefined | null = null; // null = not yet resolved
+function findClaudeCodeExecutable(): string | undefined {
+  if (_cachedClaudeCodePath !== null) return _cachedClaudeCodePath;
+  // 1. Check well-known native binary locations (fast fs.existsSync, no shell)
+  const candidates = [
+    '/opt/homebrew/bin/claude',
+    '/usr/local/bin/claude',
+    '/usr/bin/claude',
+    path.join(os.homedir(), '.claude', 'bin', 'claude'),
+  ];
+  for (const p of candidates) {
+    if (fs.existsSync(p)) {
+      _cachedClaudeCodePath = p;
+      return p;
+    }
+  }
+  // 2. Try `which claude` as fallback
+  try {
+    const result = execSync('which claude', { encoding: 'utf-8', timeout: 3000 }).trim();
+    if (result && fs.existsSync(result)) {
+      _cachedClaudeCodePath = result;
+      return result;
+    }
+  } catch {
+    // ignore
+  }
+  // 3. Look for cli.js in the globally installed npm package
+  try {
+    const npmGlobal = execSync('npm root -g', { encoding: 'utf-8', timeout: 3000 }).trim();
+    const cliJs = path.join(npmGlobal, '@anthropic-ai', 'claude-code', 'cli.js');
+    if (fs.existsSync(cliJs)) {
+      _cachedClaudeCodePath = cliJs;
+      return cliJs;
+    }
+  } catch {
+    // ignore
+  }
+  _cachedClaudeCodePath = undefined;
+  return undefined;
+}
 
 // Images are provided to Claude Code via local file paths referenced in the prompt text.
 // Claude Code CLI reads images from local paths, so we write base64 images to temp files and reference them.
@@ -92,14 +139,8 @@ export class ClaudeEngine implements AgentEngine {
     // Images are passed via temp file paths appended to the prompt string
     let query: (args: { prompt: string; options?: Record<string, unknown> }) => AsyncIterable<any>;
     try {
-      // Dynamic import to avoid hard dependency - install @anthropic-ai/claude-agent-sdk to use this engine
-      // Use string variable to bypass TypeScript module resolution
-      const sdkModuleName = '@anthropic-ai/claude-agent-sdk';
-
-      const sdk = await (Function(
-        'moduleName',
-        'return import(moduleName)',
-      )(sdkModuleName) as Promise<any>);
+      // Dynamic import - the SDK is bundled by bun compile
+      const sdk = await import('@anthropic-ai/claude-agent-sdk');
       query = sdk.query;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -602,7 +643,19 @@ export class ClaudeEngine implements AgentEngine {
         }
       }
 
+      // Resolve Claude Code executable path - required for standalone binary builds
+      // where import.meta.url resolves to a virtual filesystem path
+      const claudeCodePath = findClaudeCodeExecutable();
+      if (claudeCodePath) {
+        console.error(`[ClaudeEngine] Using Claude Code executable: ${claudeCodePath}`);
+      } else {
+        console.error(
+          '[ClaudeEngine] Warning: Claude Code executable not found, SDK will try default resolution',
+        );
+      }
+
       const queryOptions: Record<string, unknown> = {
+        ...(claudeCodePath ? { pathToClaudeCodeExecutable: claudeCodePath } : {}),
         cwd: repoPath,
         additionalDirectories: [repoPath],
         model: resolvedModel,

@@ -442,5 +442,9 @@
   "pagesUnit": {
     "message": "頁面",
     "description": "頁面計數單位"
+  },
+  "checkTroubleshooting": {
+    "message": "查看故障排除指南",
+    "description": "原生主機連線失敗時的故障排除連結"
   }
 }

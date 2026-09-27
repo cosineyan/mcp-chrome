@@ -500,5 +500,9 @@
     "message": "Paste JS/CSS/TM here",
     "description": "script textarea placeholder"
   },
-  "placeholderDomainHint": { "message": "example.com", "description": "domain filter placeholder" }
+  "placeholderDomainHint": { "message": "example.com", "description": "domain filter placeholder" },
+  "checkTroubleshooting": {
+    "message": "See troubleshooting guide",
+    "description": "Link to troubleshooting docs when native host connection fails"
+  }
 }

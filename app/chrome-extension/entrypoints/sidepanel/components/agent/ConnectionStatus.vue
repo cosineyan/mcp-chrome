@@ -1,26 +1,43 @@
 <template>
-  <div class="px-4 py-2 border-b border-slate-200 flex items-center justify-between gap-2">
-    <div class="flex items-center gap-2 text-xs text-slate-600">
-      <span :class="['inline-flex h-2 w-2 rounded-full', statusColor]"></span>
-      <span>{{ statusText }}</span>
+  <div class="border-b border-slate-200">
+    <div class="px-4 py-2 flex items-center justify-between gap-2">
+      <div class="flex items-center gap-2 text-xs text-slate-600">
+        <span :class="['inline-flex h-2 w-2 rounded-full', statusColor]"></span>
+        <span>{{ statusText }}</span>
+      </div>
+      <button
+        class="btn-secondary !px-3 !py-1 text-xs"
+        :disabled="connecting"
+        @click="$emit('reconnect')"
+      >
+        {{ connecting ? 'Reconnecting...' : 'Reconnect' }}
+      </button>
     </div>
-    <button
-      class="btn-secondary !px-3 !py-1 text-xs"
-      :disabled="connecting"
-      @click="$emit('reconnect')"
+    <div
+      v-if="!isServerReady && !nativeConnected && diagnosisText"
+      class="px-4 pb-2 text-xs text-amber-700"
     >
-      {{ connecting ? 'Reconnecting...' : 'Reconnect' }}
-    </button>
+      ⚠️ {{ diagnosisText }}
+    </div>
   </div>
 </template>
 
 <script lang="ts" setup>
 import { computed } from 'vue';
 
+const DISCONNECT_DIAGNOSIS_MAP: Record<string, string> = {
+  nativeHostNotInstalled:
+    'Native host is not registered. Please run the setup/install script first.',
+  nativeHostExited:
+    'Native host exited unexpectedly. Common cause: Node.js is not installed. Please install Node.js v18+.',
+  nativeHostForbidden: 'Extension ID mismatch. Please re-run the setup script.',
+};
+
 const props = defineProps<{
   isServerReady: boolean;
   nativeConnected: boolean;
   connecting: boolean;
+  disconnectReason?: string;
 }>();
 
 defineEmits<{
@@ -37,5 +54,11 @@ const statusText = computed(() => {
   if (props.isServerReady) return 'Agent server connected';
   if (props.nativeConnected) return 'Connecting to agent server...';
   return 'Native host not connected';
+});
+
+const diagnosisText = computed(() => {
+  const key = props.disconnectReason;
+  if (!key) return '';
+  return DISCONNECT_DIAGNOSIS_MAP[key] || key;
 });
 </script>

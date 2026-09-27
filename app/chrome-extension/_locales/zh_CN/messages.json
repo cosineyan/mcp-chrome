@@ -488,5 +488,9 @@
     "description": "匹配示例占位符"
   },
   "placeholderScriptHint": { "message": "在此粘贴 JS/CSS/TM", "description": "脚本文本域占位符" },
-  "placeholderDomainHint": { "message": "example.com", "description": "域名筛选占位符" }
+  "placeholderDomainHint": { "message": "example.com", "description": "域名筛选占位符" },
+  "checkTroubleshooting": {
+    "message": "查看故障排除指南",
+    "description": "原生主机连接失败时的故障排除链接"
+  }
 }

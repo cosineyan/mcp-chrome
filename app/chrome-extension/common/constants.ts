@@ -222,6 +222,7 @@ export const STORAGE_KEYS = {
   SERVER_STATUS: 'serverStatus',
   NATIVE_SERVER_PORT: 'nativeServerPort',
   NATIVE_AUTO_CONNECT_ENABLED: 'nativeAutoConnectEnabled',
+  NATIVE_DISCONNECT_REASON: 'nativeDisconnectReason',
   SEMANTIC_MODEL: 'selectedModel',
   USER_PREFERENCES: 'userPreferences',
   VECTOR_INDEX: 'vectorIndex',

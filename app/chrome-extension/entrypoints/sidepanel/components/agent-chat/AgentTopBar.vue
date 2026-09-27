@@ -162,6 +162,12 @@ import { computed } from 'vue';
 
 export type ConnectionState = 'ready' | 'connecting' | 'disconnected';
 
+const DISCONNECT_DIAGNOSIS_MAP: Record<string, string> = {
+  nativeHostNotInstalled: 'Native host is not registered. Run the setup script.',
+  nativeHostExited: 'Native host exited. Node.js may not be installed.',
+  nativeHostForbidden: 'Extension ID mismatch. Re-run the setup script.',
+};
+
 const props = defineProps<{
   projectLabel: string;
   sessionLabel: string;
@@ -170,6 +176,8 @@ const props = defineProps<{
   showBackButton?: boolean;
   /** Brand label to display (e.g., "Claude Code", "Codex") */
   brandLabel?: string;
+  /** Disconnect reason key for diagnosis tooltip */
+  disconnectReason?: string;
 }>();
 
 defineEmits<{
@@ -198,8 +206,11 @@ const connectionText = computed(() => {
       return 'Connected';
     case 'connecting':
       return 'Connecting...';
-    default:
-      return 'Disconnected';
+    default: {
+      const reason = props.disconnectReason;
+      const diagnosis = reason ? DISCONNECT_DIAGNOSIS_MAP[reason] || reason : '';
+      return diagnosis ? `Disconnected — ${diagnosis}` : 'Disconnected';
+    }
   }
 });
 </script>

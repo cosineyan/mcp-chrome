@@ -334,5 +334,9 @@
   },
   "pagesUnit": {
     "message": "ページ"
+  },
+  "checkTroubleshooting": {
+    "message": "トラブルシューティングガイドを見る",
+    "description": "ネイティブホスト接続失敗時のトラブルシューティングリンク"
   }
 }

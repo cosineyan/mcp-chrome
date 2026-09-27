@@ -442,5 +442,9 @@
   "pagesUnit": {
     "message": "Seiten",
     "description": "Seiten Zähleinheit"
+  },
+  "checkTroubleshooting": {
+    "message": "Fehlerbehebung anzeigen",
+    "description": "Link zur Fehlerbehebung bei Verbindungsfehler mit dem nativen Host"
   }
 }
