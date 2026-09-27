@@ -49,34 +49,71 @@ Chrome MCP Server is a Chrome extension-based **Model Context Protocol (MCP) ser
 
 ### Prerequisites
 
-- Node.js >= 20.0.0 and pnpm/npm
+- Node.js >= 20.0.0
 - Chrome/Chromium browser
 
 ### Installation Steps
 
-1. **Download the latest Chrome extension from GitHub**
+#### Option A: Pre-built Package (Recommended)
 
-Download link: https://github.com/cosineyan/mcp-chrome/releases
+No build tools required — just Node.js.
 
-2. **Load Chrome Extension**
-   - Open Chrome and go to `chrome://extensions/`
-   - Enable "Developer mode"
-   - Click "Load unpacked" and select `your/dowloaded/extension/folder`
-   - In the extension management page, note down the ID of the plugin
-   - Click the extension icon to open the plugin, then click connect to see the MCP configuration
-
-3. **Install mcp-chrome-bridge locally**
+**1. Download and install mcp-chrome-bridge**
 
 ```bash
-cd app/native-server
-npm run build
-npm link
-
-mcp-chrome-bridge register --extension-id <plugin id>
+curl -fsSL \
+  "https://github.com/cosineyan/mcp-chrome/releases/latest/download/mcp-chrome-bridge.tgz" \
+  -o /tmp/mcp-chrome-bridge.tgz
+mkdir -p "$HOME/mcp-chrome-bridge"
+tar -xzf /tmp/mcp-chrome-bridge.tgz --strip-components=1 -C "$HOME/mcp-chrome-bridge"
+cd "$HOME/mcp-chrome-bridge" && npm link
+mcp-chrome-bridge --version   # verify
 ```
 
-4. **Setup local env file**
-   ~/.mcp-chrome-bridge.env
+**2. Download the Chrome extension**
+
+```bash
+curl -fsSL \
+  "https://github.com/cosineyan/mcp-chrome/releases/latest/download/mcp-chrome-plugin.tgz" \
+  -o /tmp/mcp-chrome-plugin.tgz
+mkdir -p "$HOME/mcp-chrome-plugin"
+tar -xzf /tmp/mcp-chrome-plugin.tgz -C "$HOME/mcp-chrome-plugin"
+```
+
+**3. Load Extension in Chrome**
+
+- Open Chrome and go to `chrome://extensions/`
+- Enable "Developer mode" (toggle in the top-right corner)
+- Click "Load unpacked" and select `~/mcp-chrome-plugin`
+- The Extension ID is always `kcjeddeiaabcfmjcnfmiamacmlmfkjdl` (deterministic)
+
+**4. Register Native Messaging Host**
+
+```bash
+mcp-chrome-bridge register --force
+```
+
+**5. Connect** — Click the extension icon in Chrome and click **Connect**
+
+#### Option B: Build from Source
+
+Requires git, pnpm, and Node.js.
+
+```bash
+git clone https://github.com/cosineyan/mcp-chrome.git "$HOME/mcp-chrome"
+cd "$HOME/mcp-chrome"
+which pnpm >/dev/null || npm install -g pnpm
+pnpm install || true          # postinstall may fail before build; safe to ignore
+cd packages/shared && npm run build && cd ../..
+cd app/native-server && npm run build && npm link && cd ../..
+mcp-chrome-bridge register --force
+```
+
+Then load the extension: build it with `cd app/chrome-extension && pnpm build`, then load `app/chrome-extension/.output/chrome-mv3` as an unpacked extension in Chrome.
+
+#### Environment Variables (Optional)
+
+If you use a custom API proxy for the built-in Agent feature, create `~/.mcp-chrome-bridge.env`:
 
 ```
 export ANTHROPIC_BASE_URL=http://127.0.0.1:6655/anthropic/
@@ -84,28 +121,6 @@ export ANTHROPIC_AUTH_TOKEN=****
 export ANTHROPIC_API_KEY=****
 export MCP_BRIDGE_ENV_LOADED=1
 ```
-
-5. **Install mcp-chrome-bridge globally (not supported yet)**
-
-npm
-
-```bash
-npm install -g mcp-chrome-bridge
-```
-
-pnpm
-
-```bash
-# Method 1: Enable scripts globally (recommended)
-pnpm config set enable-pre-post-scripts true
-pnpm install -g mcp-chrome-bridge
-
-# Method 2: Manual registration (if postinstall doesn't run)
-pnpm install -g mcp-chrome-bridge
-mcp-chrome-bridge register
-```
-
-> Note: pnpm v7+ disables postinstall scripts by default for security. The `enable-pre-post-scripts` setting controls whether pre/post install scripts run. If automatic registration fails, use the manual registration command above.
 
 ### Usage with MCP Protocol Clients
 

@@ -47,43 +47,78 @@ Chrome MCP Server 是一个基于chrome插件的 **模型上下文协议 (MCP) �
 
 ### 环境要求
 
-- Node.js >= 20.0.0 和 （npm 或 pnpm）
+- Node.js >= 20.0.0
 - Chrome/Chromium 浏览器
 
 ### 安装步骤
 
-1. **从github上下载最新的chrome扩展**
+#### 方式 A：使用预构建包安装（推荐）
 
-下载地址：https://github.com/hangwin/mcp-chrome/releases
+无需构建工具，只需 Node.js。
 
-2. **全局安装mcp-chrome-bridge**
-
-npm
+**1. 下载并安装 mcp-chrome-bridge**
 
 ```bash
-npm install -g mcp-chrome-bridge
+curl -fsSL \
+  "https://github.com/cosineyan/mcp-chrome/releases/latest/download/mcp-chrome-bridge.tgz" \
+  -o /tmp/mcp-chrome-bridge.tgz
+mkdir -p "$HOME/mcp-chrome-bridge"
+tar -xzf /tmp/mcp-chrome-bridge.tgz --strip-components=1 -C "$HOME/mcp-chrome-bridge"
+cd "$HOME/mcp-chrome-bridge" && npm link
+mcp-chrome-bridge --version   # 验证安装
 ```
 
-pnpm
+**2. 下载 Chrome 扩展**
 
 ```bash
-# 方法1：全局启用脚本（推荐）
-pnpm config set enable-pre-post-scripts true
-pnpm install -g mcp-chrome-bridge
-
-# 方法2：如果 postinstall 没有运行，手动注册
-pnpm install -g mcp-chrome-bridge
-mcp-chrome-bridge register
+curl -fsSL \
+  "https://github.com/cosineyan/mcp-chrome/releases/latest/download/mcp-chrome-plugin.tgz" \
+  -o /tmp/mcp-chrome-plugin.tgz
+mkdir -p "$HOME/mcp-chrome-plugin"
+tar -xzf /tmp/mcp-chrome-plugin.tgz -C "$HOME/mcp-chrome-plugin"
 ```
 
-> 注意：pnpm v7+ 默认禁用 postinstall 脚本以提高安全性。`enable-pre-post-scripts` 设置控制是否运行 pre/post 安装脚本。如果自动注册失败，请使用上述手动注册命令。
+**3. 加载 Chrome 扩展**
 
-3. **加载 Chrome 扩展**
-   - 打开 Chrome 并访问 `chrome://extensions/`
-   - 启用"开发者模式"
-   - 点击"加载已解压的扩展程序"，选择 `your/dowloaded/extension/folder`
-   - 点击插件图标打开插件，点击连接即可看到mcp的配置
-     <img width="475" alt="截屏2025-06-09 15 52 06" src="https://github.com/user-attachments/assets/241e57b8-c55f-41a4-9188-0367293dc5bc" />
+- 打开 Chrome 并访问 `chrome://extensions/`
+- 启用"开发者模式"（右上角开关）
+- 点击"加载已解压的扩展程序"，选择 `~/mcp-chrome-plugin`
+- 扩展 ID 固定为 `kcjeddeiaabcfmjcnfmiamacmlmfkjdl`（确定性生成，无需记录）
+
+**4. 注册 Native Messaging Host**
+
+```bash
+mcp-chrome-bridge register --force
+```
+
+**5. 连接** — 点击 Chrome 工具栏中的扩展图标，点击 **Connect** 即可
+
+#### 方式 B：从源码构建
+
+需要 git、pnpm 和 Node.js。
+
+```bash
+git clone https://github.com/cosineyan/mcp-chrome.git "$HOME/mcp-chrome"
+cd "$HOME/mcp-chrome"
+which pnpm >/dev/null || npm install -g pnpm
+pnpm install || true          # postinstall 可能在构建前失败，可忽略
+cd packages/shared && npm run build && cd ../..
+cd app/native-server && npm run build && npm link && cd ../..
+mcp-chrome-bridge register --force
+```
+
+然后构建扩展：`cd app/chrome-extension && pnpm build`，在 Chrome 中加载 `app/chrome-extension/.output/chrome-mv3` 为已解压的扩展。
+
+#### 环境变量（可选）
+
+如果你使用自定义 API 代理来使用内置 Agent 功能，创建 `~/.mcp-chrome-bridge.env`：
+
+```
+export ANTHROPIC_BASE_URL=http://127.0.0.1:6655/anthropic/
+export ANTHROPIC_AUTH_TOKEN=****
+export ANTHROPIC_API_KEY=****
+export MCP_BRIDGE_ENV_LOADED=1
+```
 
 ### 在支持MCP协议的客户端中使用
 
