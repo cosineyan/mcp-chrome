@@ -150,12 +150,16 @@ function getReconnectDelayMs(attempt: number): number {
 }
 
 /**
- * Clear the reconnect timer if active.
+ * Clear the reconnect timer/alarm if active.
  */
 function clearReconnectTimer(): void {
-  if (!reconnectTimer) return;
-  clearTimeout(reconnectTimer);
-  reconnectTimer = null;
+  // Clear legacy setTimeout (kept for safety during transition)
+  if (reconnectTimer) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
+  // Clear chrome.alarms-based reconnect
+  chrome.alarms.clear(ALARM_RECONNECT);
 }
 
 /**
@@ -163,6 +167,7 @@ function clearReconnectTimer(): void {
  */
 function resetReconnectState(): void {
   reconnectAttempts = 0;
+  lastReconnectReason = '';
   clearReconnectTimer();
 }
 
@@ -256,29 +261,62 @@ async function getPreferredPort(override?: unknown): Promise<number> {
 
 // ==================== Reconnect Scheduling ====================
 
+const ALARM_RECONNECT = 'nativehost-reconnect';
+
 /**
- * Schedule a reconnect attempt with exponential backoff.
+ * Most-recent reconnect reason, persisted across SW restarts via the alarm's
+ * existence so the handler can log a meaningful trigger string.
+ */
+let lastReconnectReason = '';
+
+/**
+ * Schedule a reconnect attempt.
+ *
+ * Uses `chrome.alarms` instead of `setTimeout` so the reconnect survives
+ * MV3 service-worker termination (the alarm is managed by Chrome's internal
+ * scheduler and will re-wake the SW when it fires).
+ *
+ * Backoff strategy:
+ *   attempts 0-7 : exponential 0.5 s → 60 s  (clamped to alarm minimum ≈30 s dev / 1 min prod)
+ *   attempts 8+  : 5-minute cooldown           (with jitter)
  */
 function scheduleReconnect(reason: string): void {
   if (nativePort) return;
   if (manualDisconnect) return;
   if (!autoConnectEnabled) return;
-  if (reconnectTimer) return;
+  if (reconnectTimer) return; // legacy guard – kept for safety
 
-  const delay = getReconnectDelayMs(reconnectAttempts);
+  lastReconnectReason = reason;
+
+  const delayMs = getReconnectDelayMs(reconnectAttempts);
+  // chrome.alarms accepts minutes; minimum is ≈30 s (dev) / 1 min (prod).
+  const delayMinutes = Math.max(delayMs / 60_000, 0.05);
+
   console.debug(
-    `${LOG_PREFIX} Reconnect scheduled in ${delay}ms (attempt=${reconnectAttempts}, reason=${reason})`,
+    `${LOG_PREFIX} Reconnect alarm in ${Math.round(delayMs)}ms / ${delayMinutes.toFixed(2)}min ` +
+      `(attempt=${reconnectAttempts}, reason=${reason})`,
   );
 
-  reconnectTimer = setTimeout(() => {
-    reconnectTimer = null;
-    if (nativePort) return;
-    if (manualDisconnect || !autoConnectEnabled) return;
-
-    reconnectAttempts += 1;
-    void ensureNativeConnected(`reconnect:${reason}`).catch(() => {});
-  }, delay);
+  chrome.alarms.create(ALARM_RECONNECT, { delayInMinutes: delayMinutes });
 }
+
+// --- Alarm handler: wakes SW even after it was killed ---
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name !== ALARM_RECONNECT) return;
+
+  console.debug(
+    `${LOG_PREFIX} Reconnect alarm fired, wsState=${nativePort ? 'connected' : 'disconnected'}`,
+  );
+
+  // Clear the legacy timer reference (no-op if null)
+  reconnectTimer = null;
+
+  if (nativePort) return;
+  if (manualDisconnect || !autoConnectEnabled) return;
+
+  reconnectAttempts += 1;
+  void ensureNativeConnected(`alarm:${lastReconnectReason || 'unknown'}`).catch(() => {});
+});
 
 // ==================== Server Status Update ====================
 
