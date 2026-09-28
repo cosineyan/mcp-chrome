@@ -1,129 +1,225 @@
 #!/bin/bash
-# Install mcp-chrome: native server + native messaging host registration.
-# The Chrome extension must be loaded manually (Chrome UI only).
+# install.sh — Install mcp-chrome-bridge and Chrome extension from GitHub Releases
+#
+# Downloads the pre-built bridge tgz and extension tgz, extracts them,
+# runs npm link, and registers the Native Messaging Host. Safe to run
+# multiple times (idempotent) — skips download if already up to date.
 #
 # Usage:
-#   ./install.sh                        # guided (prompts for extension ID)
-#   ./install.sh --extension-id <id>    # non-interactive
-#   ./install.sh --local-build          # skip prebuilt download, build from source
+#   curl -fsSL https://raw.githubusercontent.com/cosineyan/mcp-chrome/master/install.sh | bash
+#   # or with a specific version:
+#   curl -fsSL ... | bash -s -- --tag v1.0.6
+#   # or from the cloned repo:
+#   ./install.sh
+#
+# Options:
+#   --tag <tag>       Release tag to install (default: v1.0.5)
+#   --bridge-dir <d>  Where to extract bridge (default: ~/mcp-chrome-bridge)
+#   --plugin-dir <d>  Where to extract extension (default: ~/Downloads/mcp-chrome-plugin)
+#   --force           Re-download even if already installed with same version
+#   --skip-register   Skip Native Messaging Host registration
+#   --skip-plugin     Skip Chrome extension download
 
-set -e
+set -euo pipefail
 
-REPO_DIR="$(cd "$(dirname "$0")" && pwd)"
-NATIVE_SERVER_DIR="$REPO_DIR/app/native-server"
-EXTENSION_DIR="$REPO_DIR/releases/chrome-extension/latest"
-EXTENSION_ZIP="$EXTENSION_DIR/chrome-mcp-server-lastest.zip"
-EXTENSION_UNPACKED="$EXTENSION_DIR/unpacked"
-PREBUILT_DIR="$REPO_DIR/releases/native-server"
+# ─── Defaults ────────────────────────────────────────────────────────
+TAG="v1.0.5"
+BRIDGE_DIR="$HOME/mcp-chrome-bridge"
+PLUGIN_DIR="$HOME/Downloads/mcp-chrome-plugin"
+FORCE=false
+SKIP_REGISTER=false
+SKIP_PLUGIN=false
+REPO="cosineyan/mcp-chrome"
 
-GITHUB_REPO="cosineyan/mcp-chrome"
-GITHUB_RELEASES_BASE="https://github.com/$GITHUB_REPO/releases/latest/download"
-
-# --- Parse args ---
-EXTENSION_ID=""
-FORCE_LOCAL_BUILD=false
+# ─── Parse args ──────────────────────────────────────────────────────
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --extension-id) EXTENSION_ID="$2"; shift 2 ;;
-    --local-build)  FORCE_LOCAL_BUILD=true; shift ;;
+    --tag)           TAG="$2"; shift 2 ;;
+    --bridge-dir)    BRIDGE_DIR="$2"; shift 2 ;;
+    --plugin-dir)    PLUGIN_DIR="$2"; shift 2 ;;
+    --force)         FORCE=true; shift ;;
+    --skip-register) SKIP_REGISTER=true; shift ;;
+    --skip-plugin)   SKIP_PLUGIN=true; shift ;;
     *) echo "Unknown option: $1"; exit 1 ;;
   esac
 done
 
-echo "=== mcp-chrome installer ==="
-echo ""
+BASE_URL="https://github.com/$REPO/releases/download/$TAG"
 
-# --- Step 1: Unpack extension (if not already done) ---
-if [ ! -d "$EXTENSION_UNPACKED" ]; then
-  echo "==> Unpacking Chrome extension..."
-  mkdir -p "$EXTENSION_UNPACKED"
-  unzip -q "$EXTENSION_ZIP" -d "$EXTENSION_UNPACKED"
-  echo "    Unpacked to: $EXTENSION_UNPACKED"
-else
-  echo "==> Extension already unpacked: $EXTENSION_UNPACKED"
-fi
+# ─── Helpers ─────────────────────────────────────────────────────────
+info()  { printf "\033[34m==> %s\033[0m\n" "$*"; }
+ok()    { printf "\033[32m  ✓ %s\033[0m\n" "$*"; }
+warn()  { printf "\033[33m  ⚠ %s\033[0m\n" "$*"; }
+err()   { printf "\033[31m  ✗ %s\033[0m\n" "$*"; }
 
-# --- Step 2: Prompt user to load extension in Chrome ---
-if [ -z "$EXTENSION_ID" ]; then
-  echo ""
-  echo "------------------------------------------------------------"
-  echo " MANUAL STEP: Load the extension in Chrome"
-  echo "------------------------------------------------------------"
-  echo " 1. Open Chrome → chrome://extensions/"
-  echo " 2. Enable 'Developer mode' (top-right toggle)"
-  echo " 3. Click 'Load unpacked' → select this folder:"
-  echo "    $EXTENSION_UNPACKED"
-  echo " 4. Copy the Extension ID shown on the extension card"
-  echo "------------------------------------------------------------"
-  echo ""
-  read -rp "Paste the Extension ID here: " EXTENSION_ID
-  if [ -z "$EXTENSION_ID" ]; then
-    echo "Error: Extension ID is required."
+check_node() {
+  if ! command -v node &>/dev/null; then
+    err "Node.js not found. Install Node.js >= 20: https://nodejs.org/"
     exit 1
   fi
-fi
+  local major
+  major="$(node -e 'console.log(process.versions.node.split(".")[0])')"
+  if [ "$major" -lt 20 ] 2>/dev/null; then
+    err "Node.js v$major found, but >= 20 is required."
+    exit 1
+  fi
+  ok "Node.js $(node --version)"
+}
 
-# --- Step 3: Resolve native server binary ---
-ARCH="$(uname -m)"
-case "$ARCH" in
-  arm64)             BINARY_NAME="mcp-chrome-bridge-macos-arm64" ;;
-  x86_64 | i386)    BINARY_NAME="mcp-chrome-bridge-macos-x64" ;;
-  *)
-    echo "Warning: unknown arch '$ARCH', falling back to x64 binary."
-    BINARY_NAME="mcp-chrome-bridge-macos-x64" ;;
-esac
+check_npm() {
+  if ! command -v npm &>/dev/null; then
+    err "npm not found. Install Node.js which includes npm."
+    exit 1
+  fi
+  ok "npm $(npm --version)"
+}
 
-NATIVE_BIN=""
+# Read version from an installed bridge's package.json (empty if absent)
+installed_bridge_version() {
+  if [ -f "$BRIDGE_DIR/package.json" ]; then
+    node -e "console.log(require('$BRIDGE_DIR/package.json').version)" 2>/dev/null || true
+  fi
+}
 
-if [ "$FORCE_LOCAL_BUILD" = false ]; then
-  # 3a. Check for locally available prebuilt binary
-  LOCAL_PREBUILT="$PREBUILT_DIR/$BINARY_NAME"
-  if [ -x "$LOCAL_PREBUILT" ]; then
-    echo ""
-    echo "==> Using local prebuilt binary: $LOCAL_PREBUILT"
-    NATIVE_BIN="$LOCAL_PREBUILT"
+# Read installed extension manifest.json version (empty if absent)
+installed_plugin_version() {
+  if [ -f "$PLUGIN_DIR/manifest.json" ]; then
+    node -e "console.log(JSON.parse(require('fs').readFileSync('$PLUGIN_DIR/manifest.json','utf8')).version)" 2>/dev/null || true
+  fi
+}
+
+# Read the .install-tag marker (records which release tag was installed)
+installed_tag() {
+  if [ -f "$BRIDGE_DIR/.install-tag" ]; then
+    cat "$BRIDGE_DIR/.install-tag"
+  fi
+}
+
+# ─── Preflight ───────────────────────────────────────────────────────
+echo ""
+info "mcp-chrome installer ($TAG)"
+echo ""
+check_node
+check_npm
+
+# ─── Step 1: Install mcp-chrome-bridge ───────────────────────────────
+echo ""
+info "Step 1: Install mcp-chrome-bridge"
+
+CURRENT_TAG="$(installed_tag)"
+CURRENT_BRIDGE="$(installed_bridge_version)"
+NEED_DOWNLOAD=true
+NEED_LINK=false
+
+if [ -n "$CURRENT_BRIDGE" ] && [ "$CURRENT_TAG" = "$TAG" ] && [ "$FORCE" = false ]; then
+  ok "Bridge already installed (v$CURRENT_BRIDGE, $TAG) at $BRIDGE_DIR"
+  NEED_DOWNLOAD=false
+  # Still check if npm link is intact
+  if command -v mcp-chrome-bridge &>/dev/null; then
+    ok "mcp-chrome-bridge on PATH"
   else
-    # 3b. Try downloading from GitHub Releases
-    DOWNLOAD_URL="$GITHUB_RELEASES_BASE/$BINARY_NAME"
-    DOWNLOAD_DEST="$PREBUILT_DIR/$BINARY_NAME"
-    echo ""
-    echo "==> Downloading prebuilt binary ($ARCH)..."
-    echo "    $DOWNLOAD_URL"
-    mkdir -p "$PREBUILT_DIR"
-    if curl -fsSL --connect-timeout 15 -o "$DOWNLOAD_DEST" "$DOWNLOAD_URL" 2>/dev/null; then
-      chmod +x "$DOWNLOAD_DEST"
-      echo "    Downloaded: $DOWNLOAD_DEST"
-      NATIVE_BIN="$DOWNLOAD_DEST"
-    else
-      echo "    Download failed (no release published yet, or no internet). Falling back to local build."
+    warn "mcp-chrome-bridge not on PATH — will re-link"
+    NEED_LINK=true
+  fi
+elif [ -n "$CURRENT_BRIDGE" ]; then
+  info "Upgrading bridge: v$CURRENT_BRIDGE ($CURRENT_TAG) → $TAG"
+fi
+
+if [ "$NEED_DOWNLOAD" = true ]; then
+  TMP_TGZ="$(mktemp /tmp/mcp-chrome-bridge.XXXXXX.tgz)"
+
+  info "Downloading bridge..."
+  if ! curl -fsSL --connect-timeout 15 "$BASE_URL/mcp-chrome-bridge.tgz" -o "$TMP_TGZ"; then
+    rm -f "$TMP_TGZ"
+    err "Download failed. Check network access to github.com."
+    err "If on a corporate network, try a personal hotspot or VPN."
+    exit 1
+  fi
+  ok "Downloaded ($(du -h "$TMP_TGZ" | cut -f1 | tr -d ' '))"
+
+  # Remove old installation, extract fresh
+  rm -rf "$BRIDGE_DIR"
+  mkdir -p "$BRIDGE_DIR"
+  tar -xzf "$TMP_TGZ" --strip-components=1 -C "$BRIDGE_DIR"
+  rm -f "$TMP_TGZ"
+  ok "Extracted to $BRIDGE_DIR"
+
+  # Write tag marker for future idempotency checks
+  echo "$TAG" > "$BRIDGE_DIR/.install-tag"
+
+  NEED_LINK=true
+fi
+
+if [ "$NEED_LINK" = true ]; then
+  info "Running npm link..."
+  (cd "$BRIDGE_DIR" && npm link 2>&1 | grep -v "^npm warn" || true)
+fi
+
+# Verify
+if command -v mcp-chrome-bridge &>/dev/null; then
+  ok "mcp-chrome-bridge $(mcp-chrome-bridge --version)"
+else
+  err "npm link finished but mcp-chrome-bridge not on PATH."
+  err "Try: export PATH=\"\$(npm config get prefix)/bin:\$PATH\""
+  exit 1
+fi
+
+# ─── Step 2: Register Native Messaging Host ──────────────────────────
+echo ""
+if [ "$SKIP_REGISTER" = false ]; then
+  info "Step 2: Register Native Messaging Host"
+  mcp-chrome-bridge register --force 2>&1 | grep -E "✓|Success|registered" || true
+  ok "Native Messaging Host registered"
+else
+  info "Step 2: Skipped (--skip-register)"
+fi
+
+# ─── Step 3: Download Chrome extension ───────────────────────────────
+echo ""
+if [ "$SKIP_PLUGIN" = false ]; then
+  info "Step 3: Download Chrome extension"
+
+  CURRENT_PLUGIN="$(installed_plugin_version)"
+  if [ -n "$CURRENT_PLUGIN" ] && [ "$FORCE" = false ] && [ -f "$PLUGIN_DIR/.install-tag" ] && [ "$(cat "$PLUGIN_DIR/.install-tag")" = "$TAG" ]; then
+    ok "Extension already installed (v$CURRENT_PLUGIN, $TAG) at $PLUGIN_DIR"
+  else
+    if [ -n "$CURRENT_PLUGIN" ]; then
+      info "Upgrading extension from v$CURRENT_PLUGIN..."
     fi
+
+    TMP_PLUGIN="$(mktemp /tmp/mcp-chrome-plugin.XXXXXX.tgz)"
+    info "Downloading extension..."
+    if ! curl -fsSL --connect-timeout 15 "$BASE_URL/mcp-chrome-plugin.tgz" -o "$TMP_PLUGIN"; then
+      rm -f "$TMP_PLUGIN"
+      err "Download failed. Check network access to github.com."
+      exit 1
+    fi
+    ok "Downloaded ($(du -h "$TMP_PLUGIN" | cut -f1 | tr -d ' '))"
+
+    rm -rf "$PLUGIN_DIR"
+    mkdir -p "$PLUGIN_DIR"
+    tar -xzf "$TMP_PLUGIN" -C "$PLUGIN_DIR"
+    rm -f "$TMP_PLUGIN"
+    echo "$TAG" > "$PLUGIN_DIR/.install-tag"
+    ok "Extracted to $PLUGIN_DIR"
   fi
+else
+  info "Step 3: Skipped (--skip-plugin)"
 fi
 
-# 3c. Fallback: build from source
-if [ -z "$NATIVE_BIN" ]; then
-  echo ""
-  echo "==> Building native server from source..."
-  cd "$NATIVE_SERVER_DIR"
-  if [ ! -d "node_modules" ]; then
-    npm install -q
-  fi
-  npm run build --silent
-  echo ""
-  echo "==> Installing mcp-chrome-bridge globally..."
-  npm link --silent
-  echo "    Installed: $(mcp-chrome-bridge --version)"
-  NATIVE_BIN="$(command -v mcp-chrome-bridge)"
+# ─── Done ────────────────────────────────────────────────────────────
+echo ""
+info "Installation complete!"
+echo ""
+echo "  Next steps (Chrome UI — cannot be automated):"
+echo ""
+echo "  1. Open Chrome → chrome://extensions/"
+echo "  2. Enable Developer mode (top-right toggle)"
+if [ "$SKIP_PLUGIN" = false ]; then
+  echo "  3. Click 'Load unpacked' → select: $PLUGIN_DIR"
 fi
-
-# --- Step 4: Register native messaging host ---
+echo "     Extension ID: kcjeddeiaabcfmjcnfmiamacmlmfkjdl (deterministic)"
+echo "  4. Click the extension icon → Connect"
 echo ""
-echo "==> Registering native messaging host..."
-"$NATIVE_BIN" register --extension-id "$EXTENSION_ID" --force
+echo "  Verify: curl -s http://127.0.0.1:12306/ping"
 echo ""
-echo "=== Done! ==="
-echo ""
-echo "Next steps:"
-echo "  1. Click the extension icon in Chrome → Connect"
-echo "  2. Copy the MCP config shown in the popup into your Claude Code settings"
-echo "  3. Restart Claude Code"
