@@ -21,6 +21,37 @@ console.log('dist 和 dist/logs 目录已创建/确认存在');
 console.log('编译TypeScript...');
 execSync('tsc', { stdio: 'inherit' });
 
+// ── esbuild: 内联 chrome-mcp-shared 到运行时入口 ────────────────────
+// chrome-mcp-shared 是 pnpm workspace 内部包，开发时通过 symlink 解析，
+// 但 release tgz / npm link 后不存在。在 build 时将其内联到入口文件，
+// 消除运行时对该包的 require()。其余第三方依赖保持 external。
+console.log('内联 chrome-mcp-shared...');
+const { buildSync } = require('esbuild');
+
+const runtimeEntries = [
+  path.join(distDir, 'index.js'),
+  path.join(distDir, 'mcp', 'mcp-server-stdio.js'),
+];
+
+const pkgDeps = require('../../package.json').dependencies || {};
+const externalDeps = Object.keys(pkgDeps).filter((d: string) => d !== 'chrome-mcp-shared');
+
+for (const entry of runtimeEntries) {
+  if (!fs.existsSync(entry)) continue;
+  buildSync({
+    entryPoints: [entry],
+    bundle: true,
+    platform: 'node',
+    target: 'node20',
+    format: 'cjs',
+    outfile: entry,
+    allowOverwrite: true,
+    external: externalDeps,
+    logLevel: 'warning',
+  });
+  console.log(`  ✓ ${path.relative(distDir, entry)}`);
+}
+
 // 复制配置文件
 console.log('复制配置文件...');
 const configSourcePath = path.join(__dirname, '..', 'mcp', 'stdio-config.json');

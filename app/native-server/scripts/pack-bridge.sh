@@ -52,18 +52,15 @@ cp -R dist "$BRIDGE_DIR/dist"
 # 2. Remove dev-only files from dist
 rm -f "$BRIDGE_DIR/dist/node_path.txt"
 
-# 3. Bundle chrome-mcp-shared (workspace package) into node_modules
-mkdir -p "$BRIDGE_DIR/node_modules/chrome-mcp-shared"
-cp "$REPO_ROOT/packages/shared/package.json" "$BRIDGE_DIR/node_modules/chrome-mcp-shared/"
-cp -R "$REPO_ROOT/packages/shared/dist" "$BRIDGE_DIR/node_modules/chrome-mcp-shared/dist"
+# 3. (chrome-mcp-shared is now inlined by esbuild at build time — no vendoring needed)
 
 # 4. Create a clean package.json for the tarball
-#    - Replace "chrome-mcp-shared": "workspace:*" with a file: reference
+#    - Remove chrome-mcp-shared (inlined by esbuild, no runtime resolve needed)
 #    - Strip devDependencies (not needed at runtime)
 #    - Strip pkg config (not needed for Node.js execution)
 node -e "
 const pkg = require('./package.json');
-// Remove workspace dep — it's bundled in node_modules already
+// Remove workspace dep — inlined by esbuild at build time
 delete pkg.dependencies['chrome-mcp-shared'];
 // Strip dev-only fields
 delete pkg.devDependencies;
