@@ -23,7 +23,7 @@
 set -euo pipefail
 
 # ─── Defaults ────────────────────────────────────────────────────────
-TAG="v1.0.5"
+TAG="v1.0.7"
 BRIDGE_DIR="$HOME/mcp-chrome-bridge"
 PLUGIN_DIR="$HOME/Downloads/mcp-chrome-plugin"
 FORCE=false
